@@ -22,6 +22,7 @@ import {
   type RouteResult,
   type SignalStop,
 } from "./router";
+import { formatCoord, reverseGeocode } from "./geocode";
 
 const SAPPORO_STATION: LatLng = { lat: 43.0687, lng: 141.3508 };
 const REFRESH_MS = 12000;
@@ -38,7 +39,6 @@ const modeInspectBtn = document.getElementById("mode-inspect") as HTMLButtonElem
 const statusEl = document.getElementById("status")!;
 const searchBtn = document.getElementById("search-btn") as HTMLButtonElement;
 const resultEl = document.getElementById("result")!;
-const clockEl = document.getElementById("clock")!;
 
 const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
 const softwareWebGL = isSoftwareWebGL();
@@ -182,20 +182,34 @@ let walkerMarker: Marker | null = null;
 let routeSignals: SignalPin[] = [];
 let lastResult: RouteResult | null = null;
 let refreshTimer: number | null = null;
+let originLookup = 0;
+let destLookup = 0;
 
 function setStatus(msg: string, isError = false) {
   statusEl.textContent = msg;
   statusEl.classList.toggle("error", isError);
 }
 
-function fmtCoord(p: LatLng): string {
-  return `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`;
-}
-
-function tickClock() {
-  clockEl.textContent = formatClock();
+function tickLive() {
   updateLiveSignals();
   updateWalker();
+}
+
+async function showAddress(
+  el: HTMLElement,
+  p: LatLng,
+  seq: number,
+  current: () => number
+) {
+  el.textContent = "住所を取得中…";
+  try {
+    const addr = await reverseGeocode(p);
+    if (seq !== current()) return;
+    el.textContent = addr;
+  } catch {
+    if (seq !== current()) return;
+    el.textContent = formatCoord(p);
+  }
 }
 
 function signalPopupHTML(stop: SignalStop): string {
@@ -514,7 +528,7 @@ function onMapClick(e: { lngLat: { lat: number; lng: number } }) {
 
   if (tapMode === "origin") {
     origin = p;
-    originLabel.textContent = fmtCoord(p);
+    void showAddress(originLabel, p, ++originLookup, () => originLookup);
     originMarker?.setLngLat(lngLat(p));
     resultEl.hidden = true;
     clearRoute();
@@ -525,7 +539,7 @@ function onMapClick(e: { lngLat: { lat: number; lng: number } }) {
   }
 
   dest = p;
-  destLabel.textContent = fmtCoord(p);
+  void showAddress(destLabel, p, ++destLookup, () => destLookup);
   if (destMarker) destMarker.setLngLat(lngLat(p));
   else {
     destMarker = new Marker({
@@ -609,8 +623,9 @@ searchBtn.addEventListener("click", () => {
   scheduleRefresh();
 });
 
-tickClock();
-window.setInterval(tickClock, 1000);
+void showAddress(originLabel, origin, ++originLookup, () => originLookup);
+tickLive();
+window.setInterval(tickLive, 1000);
 
 loadGraph().catch((err) => {
   console.error(err);
