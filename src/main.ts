@@ -24,6 +24,8 @@ import {
 const SAPPORO_STATION: LatLng = { lat: 43.0687, lng: 141.3508 };
 const REFRESH_MS = 12000;
 const TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? "";
+const TOKEN_ERROR =
+  "Mapbox のアクセストークンが未設定です。VITE_MAPBOX_ACCESS_TOKEN を設定してください。";
 
 const mapEl = document.getElementById("map")!;
 const destLabel = document.getElementById("dest-label")!;
@@ -37,27 +39,8 @@ const clockEl = document.getElementById("clock")!;
 
 const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
 
-const map = new MapboxMap({
-  container: mapEl,
-  accessToken: TOKEN,
-  style: "mapbox://styles/mapbox/standard",
-  center: [SAPPORO_STATION.lng, SAPPORO_STATION.lat],
-  zoom: 14,
-  maxPitch: 0,
-  dragRotate: false,
-  language: "ja",
-  config: {
-    basemap: { lightPreset: darkMq.matches ? "night" : "day" },
-  },
-  locale: {
-    "NavigationControl.ZoomIn": "拡大",
-    "NavigationControl.ZoomOut": "縮小",
-  },
-});
-map.addControl(new NavigationControl({ showCompass: false }), "top-right");
-darkMq.addEventListener("change", () => {
-  map.setConfigProperty("basemap", "lightPreset", darkMq.matches ? "night" : "day");
-});
+let map: MapboxMap | null = null;
+let originMarker: Marker | null = null;
 
 function lngLat(p: LatLng): [number, number] {
   return [p.lng, p.lat];
@@ -93,12 +76,22 @@ function circlePolygon(center: LatLng, radiusM: number, steps = 64) {
   return { type: "Polygon" as const, coordinates: [coords] };
 }
 
+function showMapError(message: string) {
+  const el = document.createElement("div");
+  el.className = "map-error";
+  el.setAttribute("role", "alert");
+  el.textContent = message;
+  mapEl.insertAdjacentElement("afterend", el);
+}
+
 function onMapReady(fn: () => void) {
+  if (!map) return;
   if (map.isStyleLoaded()) fn();
   else map.once("load", fn);
 }
 
 function ensureOverlays() {
+  if (!map) return;
   if (!map.getSource("range")) {
     map.addSource("range", { type: "geojson", data: emptyCollection() });
     map.addLayer({
@@ -131,6 +124,7 @@ function ensureOverlays() {
 }
 
 function setRouteLine(path: LatLng[] | null) {
+  if (!map) return;
   ensureOverlays();
   const src = map.getSource("route") as GeoJSONSource;
   if (!path || path.length < 2) {
@@ -145,13 +139,6 @@ function setRouteLine(path: LatLng[] | null) {
 }
 
 type SignalPin = { marker: Marker; popup: Popup; el: HTMLElement };
-
-const originMarker = new Marker({
-  element: makeDot("#34C759", 22),
-  anchor: "center",
-})
-  .setLngLat(lngLat(SAPPORO_STATION))
-  .addTo(map);
 
 let graph: GraphData | null = null;
 let origin: LatLng = { ...SAPPORO_STATION };
@@ -220,6 +207,8 @@ function clearRoute() {
 }
 
 function showResult(result: RouteResult, fitted: boolean) {
+  if (!map) return;
+  const currentMap = map;
   lastResult = result;
   onMapReady(() => {
     setRouteLine(result.path);
@@ -227,7 +216,7 @@ function showResult(result: RouteResult, fitted: boolean) {
       const bounds = new LngLatBounds();
       for (const p of result.path) bounds.extend(lngLat(p));
       const wide = window.innerWidth > 720;
-      map.fitBounds(bounds, {
+      currentMap.fitBounds(bounds, {
         padding: wide
           ? { top: 24, left: 420, bottom: 24, right: 24 }
           : { top: 24, left: 24, bottom: 280, right: 24 },
@@ -250,7 +239,7 @@ function showResult(result: RouteResult, fitted: boolean) {
     const marker = new Marker({ element: el, anchor: "center" })
       .setLngLat(lngLat(stop))
       .setPopup(popup)
-      .addTo(map);
+      .addTo(currentMap);
     return { marker, popup, el };
   });
   updateLiveSignals();
@@ -260,7 +249,7 @@ function showResult(result: RouteResult, fitted: boolean) {
     el.style.boxShadow = "0 2px 8px rgba(0,122,255,.35)";
     walkerMarker = new Marker({ element: el, anchor: "center" })
       .setLngLat(lngLat(result.path[0]))
-      .addTo(map);
+      .addTo(currentMap);
   }
   updateWalker();
 
@@ -358,12 +347,13 @@ function scheduleRefresh() {
 }
 
 async function loadGraph(): Promise<void> {
-  setStatus("歩行ネットワークを読み込み中…");
+  if (TOKEN) setStatus("歩行ネットワークを読み込み中…");
   const res = await fetch(`${import.meta.env.BASE_URL}data/graph.json`);
   if (!res.ok) throw new Error(`graph.json の取得に失敗 (${res.status})`);
   graph = normalizeGraph(await res.json());
 
   onMapReady(() => {
+    if (!map) return;
     ensureOverlays();
     (map.getSource("range") as GeoJSONSource).setData({
       type: "Feature",
@@ -372,15 +362,11 @@ async function loadGraph(): Promise<void> {
     });
   });
 
-  setStatus("地図をタップして終点を指定してください");
+  if (TOKEN) setStatus("地図をタップして終点を指定してください");
 }
 
-map.on("load", () => {
-  ensureOverlays();
-});
-
-map.on("click", (e) => {
-  if (!graph) return;
+function onMapClick(e: { lngLat: { lat: number; lng: number } }) {
+  if (!graph || !map) return;
   const p: LatLng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
   const d = distanceFromOriginM(p, graph.origin);
   if (d > graph.maxRadiusM) {
@@ -394,7 +380,7 @@ map.on("click", (e) => {
   if (tapMode === "origin") {
     origin = p;
     originLabel.textContent = fmtCoord(p);
-    originMarker.setLngLat(lngLat(p));
+    originMarker?.setLngLat(lngLat(p));
     resultEl.hidden = true;
     clearRoute();
     updateSearchEnabled();
@@ -419,7 +405,47 @@ map.on("click", (e) => {
   resultEl.hidden = true;
   clearRoute();
   setStatus("終点を設定しました。「いま出発で検索」を押してください");
-});
+}
+
+function initMap() {
+  const current = new MapboxMap({
+    container: mapEl,
+    accessToken: TOKEN,
+    style: "mapbox://styles/mapbox/standard",
+    center: [SAPPORO_STATION.lng, SAPPORO_STATION.lat],
+    zoom: 14,
+    maxPitch: 0,
+    dragRotate: false,
+    language: "ja",
+    config: {
+      basemap: { lightPreset: darkMq.matches ? "night" : "day" },
+    },
+    locale: {
+      "NavigationControl.ZoomIn": "拡大",
+      "NavigationControl.ZoomOut": "縮小",
+    },
+  });
+  current.addControl(new NavigationControl({ showCompass: false }), "top-right");
+  darkMq.addEventListener("change", () => {
+    current.setConfigProperty("basemap", "lightPreset", darkMq.matches ? "night" : "day");
+  });
+  originMarker = new Marker({
+    element: makeDot("#34C759", 22),
+    anchor: "center",
+  })
+    .setLngLat(lngLat(SAPPORO_STATION))
+    .addTo(current);
+  current.on("load", () => ensureOverlays());
+  current.on("click", onMapClick);
+  map = current;
+}
+
+if (!TOKEN) {
+  showMapError(TOKEN_ERROR);
+  setStatus(TOKEN_ERROR, true);
+} else {
+  initMap();
+}
 
 modeOriginBtn.addEventListener("click", () => setTapMode("origin"));
 modeDestBtn.addEventListener("click", () => setTapMode("dest"));
@@ -431,13 +457,6 @@ searchBtn.addEventListener("click", () => {
 
 tickClock();
 window.setInterval(tickClock, 1000);
-
-if (!TOKEN) {
-  setStatus(
-    "Mapbox のアクセストークンが未設定です。VITE_MAPBOX_ACCESS_TOKEN を設定してください。",
-    true
-  );
-}
 
 loadGraph().catch((err) => {
   console.error(err);

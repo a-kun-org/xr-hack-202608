@@ -61,6 +61,21 @@ body {
   background: var(--grouped);
 }
 
+.map-error {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px 24px 24px min(420px, 42%);
+  background: var(--grouped);
+  color: var(--secondary-label);
+  font-size: 15px;
+  line-height: 1.45;
+  text-align: center;
+  pointer-events: none;
+}
+
 .mapboxgl-ctrl-group {
   border: none !important;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
@@ -345,6 +360,10 @@ h1 {
     max-height: 52vh;
     border-radius: 16px 16px 0 0;
     padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .map-error {
+    padding: 24px 24px 55vh;
   }
 
   h1 {
