@@ -23,6 +23,13 @@ import {
   type SignalStop,
 } from "./router";
 import { formatCoord, reverseGeocode } from "./geocode";
+import {
+  classifyPath,
+  formatUnderLabel,
+  splitRouteGeoJSON,
+  undergroundGeoJSON,
+  type UndergroundData,
+} from "./underground";
 
 const SAPPORO_STATION: LatLng = { lat: 43.0687, lng: 141.3508 };
 const REFRESH_MS = 12000;
@@ -139,12 +146,38 @@ function ensureOverlays() {
       paint: { "line-color": "#007AFF", "line-width": 1 },
     });
   }
+  if (!map.getSource("underground")) {
+    map.addSource("underground", { type: "geojson", data: emptyCollection() });
+    map.addLayer({
+      id: "underground-fill",
+      type: "fill",
+      source: "underground",
+      filter: ["==", ["geometry-type"], "Polygon"],
+      ...layerSlot(),
+      paint: { "fill-color": "#AF52DE", "fill-opacity": 0.22 },
+    });
+    map.addLayer({
+      id: "underground-line",
+      type: "line",
+      source: "underground",
+      filter: ["==", ["geometry-type"], "LineString"],
+      ...layerSlot(),
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#AF52DE",
+        "line-width": 5,
+        "line-opacity": 0.62,
+      },
+    });
+  }
   if (!map.getSource("route")) {
     map.addSource("route", { type: "geojson", data: emptyCollection() });
     map.addLayer({
       id: "route-line",
       type: "line",
       source: "route",
+      filter: ["!=", ["get", "under"], 1],
+      ...layerSlot(),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": "#007AFF",
@@ -152,10 +185,48 @@ function ensureOverlays() {
         "line-opacity": 0.92,
       },
     });
+    map.addLayer({
+      id: "route-under-casing",
+      type: "line",
+      source: "route",
+      filter: ["==", ["get", "under"], 1],
+      ...layerSlot(),
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-width": 8,
+        "line-opacity": 0.9,
+      },
+    });
+    map.addLayer({
+      id: "route-under",
+      type: "line",
+      source: "route",
+      filter: ["==", ["get", "under"], 1],
+      ...layerSlot(),
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#AF52DE",
+        "line-width": 5,
+        "line-opacity": 1,
+      },
+    });
   }
 }
 
-function setRouteLine(path: LatLng[] | null) {
+function layerSlot(): { slot?: string } {
+  return softwareWebGL ? {} : { slot: "top" };
+}
+
+function paintUnderground() {
+  if (!map || !underground) return;
+  ensureOverlays();
+  (map.getSource("underground") as GeoJSONSource).setData(
+    undergroundGeoJSON(underground.areas)
+  );
+}
+
+function setRouteLine(path: LatLng[] | null, underFlags: boolean[] | null = null) {
   if (!map) return;
   ensureOverlays();
   const src = map.getSource("route") as GeoJSONSource;
@@ -163,10 +234,19 @@ function setRouteLine(path: LatLng[] | null) {
     src.setData(emptyCollection());
     return;
   }
+  if (underFlags && underFlags.length === path.length) {
+    src.setData(splitRouteGeoJSON(path, underFlags));
+    return;
+  }
   src.setData({
-    type: "Feature",
-    properties: {},
-    geometry: { type: "LineString", coordinates: path.map(lngLat) },
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: { under: 0 },
+        geometry: { type: "LineString", coordinates: path.map(lngLat) },
+      },
+    ],
   });
 }
 
@@ -174,6 +254,8 @@ type TapMode = "origin" | "dest" | "inspect";
 type SignalPin = { marker: Marker; popup: Popup; el: HTMLElement; wrap: HTMLElement };
 
 let graph: GraphData | null = null;
+let underground: UndergroundData | null = null;
+let lastUnderFlags: boolean[] | null = null;
 let origin: LatLng = { ...SAPPORO_STATION };
 let dest: LatLng | null = null;
 let destMarker: Marker | null = null;
@@ -333,6 +415,7 @@ function updateWalker() {
 }
 
 function clearRoute() {
+  lastUnderFlags = null;
   onMapReady(() => setRouteLine(null));
   walkerMarker?.remove();
   walkerMarker = null;
@@ -350,8 +433,16 @@ function showResult(result: RouteResult, fitted: boolean) {
   if (!map) return;
   const currentMap = map;
   lastResult = result;
+  const underHit = underground
+    ? classifyPath(result.path, underground.areas)
+    : { names: [], underM: 0, flags: result.path.map(() => false) };
+  lastUnderFlags = underHit.flags;
+  document.getElementById("r-under")!.textContent = formatUnderLabel(
+    underHit,
+    graph?.walkSpeedMps ?? 1.2
+  );
   onMapReady(() => {
-    setRouteLine(result.path);
+    setRouteLine(result.path, underHit.flags);
     if (fitted) {
       const bounds = new LngLatBounds();
       for (const p of result.path) bounds.extend(lngLat(p));
@@ -546,8 +637,17 @@ async function loadGraph(): Promise<void> {
   const res = await fetch(`${import.meta.env.BASE_URL}data/graph.json`);
   if (!res.ok) throw new Error(`graph.json の取得に失敗 (${res.status})`);
   graph = normalizeGraph(await res.json());
+  try {
+    const underRes = await fetch(`${import.meta.env.BASE_URL}data/underground.json`);
+    if (underRes.ok) underground = (await underRes.json()) as UndergroundData;
+  } catch {
+    underground = null;
+  }
 
-  onMapReady(paintRange);
+  onMapReady(() => {
+    paintRange();
+    paintUnderground();
+  });
 
   if (TOKEN) setStatus("地図をタップして終点を指定してください");
 }
@@ -649,7 +749,8 @@ function initMap() {
   current.on("style.load", () => {
     ensureOverlays();
     paintRange();
-    if (lastResult) setRouteLine(lastResult.path);
+    paintUnderground();
+    if (lastResult) setRouteLine(lastResult.path, lastUnderFlags);
   });
   current.on("click", onMapClick);
   map = current;

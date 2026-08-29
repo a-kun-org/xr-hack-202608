@@ -27,6 +27,7 @@
         <p class="note source">
           「交差点制御情報」（公益財団法人日本道路交通情報センター）（<a href="https://www.jartic.or.jp/service/opendata/">https://www.jartic.or.jp/service/opendata/</a>）を加工して作成
         </p>
+        <p class="note source">地図の紫はチカホ・アピアなどの地下街・地下通路です。</p>
         <div class="segmented" role="group" aria-label="地図タップの対象">
           <button type="button" id="mode-origin" class="mode-btn">起点</button>
           <button type="button" id="mode-dest" class="mode-btn active">終点</button>
@@ -55,6 +56,7 @@
             <li><span>歩行</span><strong id="r-walk">—</strong></li>
             <li><span>信号待ち</span><strong id="r-wait">—</strong></li>
             <li><span>通過信号</span><strong id="r-signals">—</strong></li>
+            <li><span>地下歩行</span><strong id="r-under">—</strong></li>
           </ul>
           <h2>信号の通過時刻</h2>
           <ol id="signal-timeline" class="grouped timeline"></ol>
