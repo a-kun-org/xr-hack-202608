@@ -34,6 +34,8 @@ MATCH_M = 60
 DEFAULT_CYCLE = 90.0
 DEFAULT_PED_GREEN = 15.0  # 歩行者青（点滅は含めない）
 NEAR_SIGNAL_M = 18.0
+# 車用信号は交差点中央寄りなので、横断歩道端までやや広めに見る
+NEAR_VEHICLE_SIGNAL_M = 30.0
 
 # ~5.2km bbox
 BBOX = (43.022, 141.288, 43.115, 141.414)  # south, west, north, east
@@ -376,6 +378,7 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
         return grid
 
     ped_grid = index_pts(ped_pts)
+    vehicle_grid = index_pts(vehicle_pts)
 
     def near_any(
         lat: float,
@@ -392,10 +395,14 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
         return False
 
     def way_is_ped_crossing(tags: dict, nds: list[int]) -> bool:
-        """歩行者用信号がある横断歩道のみ True（車用信号の近接だけでは待たない）。"""
+        """信号待ちする横断歩道か。
+
+        OSM では歩行者信号タグが欠けることが多く、交差点の車用信号近くの
+        footway=crossing は実質ほぼ歩行者信号あり、として扱う。
+        """
         if is_uncontrolled_crossing(tags):
             return False
-        # 横断歩道として明示されたウェイだけが対象
+        # 横断歩道として明示されたウェイだけが対象（歩道の直進は待たない）
         if not is_crossing_way(tags):
             return False
         if (
@@ -409,10 +416,11 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
             n = nodes_raw[nid]
             if near_any(n["lat"], n["lng"], ped_grid, NEAR_SIGNAL_M):
                 return True
+            if near_any(n["lat"], n["lng"], vehicle_grid, NEAR_VEHICLE_SIGNAL_M):
+                return True
         return False
 
-    edges_out: list[dict] = []
-    seen: set[tuple[int, int]] = set()
+    edge_map: dict[tuple[int, int], dict] = {}
     ped_edge_count = 0
     for way in ways:
         tags = way.get("tags", {})
@@ -420,6 +428,7 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
             continue
         nds = [n for n in way.get("nodes", []) if n in id_map]
         ped_crossing = way_is_ped_crossing(tags, nds)
+        segs: list[tuple[int, int, float, float, float]] = []
         for a, b in zip(nds, nds[1:]):
             na, nb = nodes_raw[a], nodes_raw[b]
             length = haversine_m(na["lat"], na["lng"], nb["lat"], nb["lng"])
@@ -428,22 +437,31 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
             ia, ib = id_map[a], id_map[b]
             mid_lat = (na["lat"] + nb["lat"]) / 2
             mid_lng = (na["lng"] + nb["lng"]) / 2
-            cycle = cycle_near(mid_lat, mid_lng) if ped_crossing else 0.0
+            segs.append((ia, ib, length, mid_lat, mid_lng))
+        # 1横断 = 1待ち。複数セグメントでも中央の1本だけ信号扱い
+        signal_idx = len(segs) // 2 if ped_crossing and segs else -1
+        for i, (ia, ib, length, mid_lat, mid_lng) in enumerate(segs):
+            is_sig = i == signal_idx
+            cycle = cycle_near(mid_lat, mid_lng) if is_sig else 0.0
+            walk = round(length / WALK_SPEED, 2)
             for u, v in ((ia, ib), (ib, ia)):
-                if (u, v) in seen:
-                    continue
-                seen.add((u, v))
-                edges_out.append(
-                    {
+                key = (u, v)
+                prev = edge_map.get(key)
+                if prev is None:
+                    edge_map[key] = {
                         "from": u,
                         "to": v,
-                        "walkSec": round(length / WALK_SPEED, 2),
+                        "walkSec": walk,
                         "cycleSec": round(cycle, 1),
-                        "isSignal": ped_crossing,
+                        "isSignal": is_sig,
                     }
-                )
-                if ped_crossing:
+                    if is_sig:
+                        ped_edge_count += 1
+                elif is_sig and not prev["isSignal"]:
+                    prev["isSignal"] = True
+                    prev["cycleSec"] = round(cycle, 1)
                     ped_edge_count += 1
+    edges_out = list(edge_map.values())
     print(f"  edges={len(edges_out)} pedCrossingEdges={ped_edge_count}", flush=True)
 
     used = {e["from"] for e in edges_out} | {e["to"] for e in edges_out}
