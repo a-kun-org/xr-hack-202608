@@ -38,9 +38,38 @@ const resultEl = document.getElementById("result")!;
 const clockEl = document.getElementById("clock")!;
 
 const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
+const softwareWebGL = isSoftwareWebGL();
 
 let map: MapboxMap | null = null;
 let originMarker: Marker | null = null;
+
+function isSoftwareWebGL(): boolean {
+  const canvas = document.createElement("canvas");
+  const gl = canvas.getContext("webgl");
+  if (!gl) return true;
+  const ext = gl.getExtension("WEBGL_debug_renderer_info");
+  if (!ext) return false;
+  const renderer = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL));
+  return /swiftshader|llvmpipe|softpipe|software/i.test(renderer);
+}
+
+function rasterStyle(dark: boolean) {
+  const id = dark ? "dark-v11" : "streets-v12";
+  return {
+    version: 8 as const,
+    sources: {
+      basemap: {
+        type: "raster" as const,
+        tiles: [
+          `https://api.mapbox.com/styles/v1/mapbox/${id}/tiles/{z}/{x}/{y}?access_token=${TOKEN}`,
+        ],
+        tileSize: 512,
+        attribution: "© Mapbox © OpenStreetMap",
+      },
+    },
+    layers: [{ id: "basemap", type: "raster" as const, source: "basemap" }],
+  };
+}
 
 function lngLat(p: LatLng): [number, number] {
   return [p.lng, p.lat];
@@ -356,15 +385,7 @@ async function loadGraph(): Promise<void> {
   if (!res.ok) throw new Error(`graph.json の取得に失敗 (${res.status})`);
   graph = normalizeGraph(await res.json());
 
-  onMapReady(() => {
-    if (!map) return;
-    ensureOverlays();
-    (map.getSource("range") as GeoJSONSource).setData({
-      type: "Feature",
-      properties: {},
-      geometry: circlePolygon(graph!.origin, graph!.maxRadiusM),
-    });
-  });
+  onMapReady(paintRange);
 
   if (TOKEN) setStatus("地図をタップして終点を指定してください");
 }
@@ -411,19 +432,29 @@ function onMapClick(e: { lngLat: { lat: number; lng: number } }) {
   setStatus("終点を設定しました。「いま出発で検索」を押してください");
 }
 
+function paintRange() {
+  if (!map || !graph) return;
+  ensureOverlays();
+  (map.getSource("range") as GeoJSONSource).setData({
+    type: "Feature",
+    properties: {},
+    geometry: circlePolygon(graph.origin, graph.maxRadiusM),
+  });
+}
+
 function initMap() {
   const current = new MapboxMap({
     container: mapEl,
     accessToken: TOKEN,
-    style: "mapbox://styles/mapbox/standard",
+    style: softwareWebGL ? rasterStyle(darkMq.matches) : "mapbox://styles/mapbox/standard",
     center: [SAPPORO_STATION.lng, SAPPORO_STATION.lat],
     zoom: 14,
     maxPitch: 0,
     dragRotate: false,
-    language: "ja",
-    config: {
-      basemap: { lightPreset: darkMq.matches ? "night" : "day" },
-    },
+    language: softwareWebGL ? undefined : "ja",
+    config: softwareWebGL
+      ? undefined
+      : { basemap: { lightPreset: darkMq.matches ? "night" : "day" } },
     locale: {
       "NavigationControl.ZoomIn": "拡大",
       "NavigationControl.ZoomOut": "縮小",
@@ -431,7 +462,8 @@ function initMap() {
   });
   current.addControl(new NavigationControl({ showCompass: false }), "top-right");
   darkMq.addEventListener("change", () => {
-    current.setConfigProperty("basemap", "lightPreset", darkMq.matches ? "night" : "day");
+    if (softwareWebGL) current.setStyle(rasterStyle(darkMq.matches));
+    else current.setConfigProperty("basemap", "lightPreset", darkMq.matches ? "night" : "day");
   });
   originMarker = new Marker({
     element: makeDot("#34C759", 22),
@@ -439,7 +471,11 @@ function initMap() {
   })
     .setLngLat(lngLat(SAPPORO_STATION))
     .addTo(current);
-  current.on("load", () => ensureOverlays());
+  current.on("style.load", () => {
+    ensureOverlays();
+    paintRange();
+    if (lastResult) setRouteLine(lastResult.path);
+  });
   current.on("click", onMapClick);
   map = current;
 }
