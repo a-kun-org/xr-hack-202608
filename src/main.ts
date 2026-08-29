@@ -31,6 +31,7 @@ const TOKEN_ERROR =
   "Mapbox のアクセストークンが未設定です。VITE_MAPBOX_ACCESS_TOKEN を設定してください。";
 
 const mapEl = document.getElementById("map")!;
+const sheetEl = document.querySelector(".sheet");
 const destLabel = document.getElementById("dest-label")!;
 const originLabel = document.getElementById("origin-label")!;
 const modeOriginBtn = document.getElementById("mode-origin") as HTMLButtonElement;
@@ -42,9 +43,77 @@ const resultEl = document.getElementById("result")!;
 
 const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
 const softwareWebGL = isSoftwareWebGL();
+const APPEARANCE_KEY = "appearance";
+const appearanceBtns = {
+  auto: document.getElementById("appearance-auto") as HTMLButtonElement,
+  light: document.getElementById("appearance-light") as HTMLButtonElement,
+  dark: document.getElementById("appearance-dark") as HTMLButtonElement,
+};
+
+type Appearance = "auto" | "light" | "dark";
+
+function readAppearance(): Appearance {
+  const value = localStorage.getItem(APPEARANCE_KEY);
+  return value === "light" || value === "dark" || value === "auto" ? value : "auto";
+}
+
+function isDarkTheme(mode = appearance): boolean {
+  return mode === "dark" || (mode === "auto" && darkMq.matches);
+}
 
 let map: MapboxMap | null = null;
 let originMarker: Marker | null = null;
+
+function syncMapTheme(dark: boolean) {
+  if (!map) return;
+  if (softwareWebGL) map.setStyle(rasterStyle(dark));
+  else map.setConfigProperty("basemap", "lightPreset", dark ? "night" : "day");
+}
+
+function applyAppearance(mode: Appearance) {
+  const dark = isDarkTheme(mode);
+  document.documentElement.classList.toggle("theme-dark", dark);
+  document.documentElement.style.colorScheme = dark ? "dark" : "light";
+  document
+    .getElementById("theme-color")
+    ?.setAttribute("content", dark ? "#000000" : "#F2F2F7");
+  for (const key of Object.keys(appearanceBtns) as Appearance[]) {
+    const on = key === mode;
+    appearanceBtns[key].classList.toggle("active", on);
+    appearanceBtns[key].setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  syncMapTheme(dark);
+}
+
+let appearance = readAppearance();
+applyAppearance(appearance);
+
+for (const mode of Object.keys(appearanceBtns) as Appearance[]) {
+  appearanceBtns[mode].addEventListener("click", () => {
+    appearance = mode;
+    localStorage.setItem(APPEARANCE_KEY, mode);
+    applyAppearance(mode);
+  });
+}
+
+darkMq.addEventListener("change", () => {
+  if (appearance === "auto") applyAppearance("auto");
+});
+
+if (sheetEl) {
+  let hideScrollbar = 0;
+  sheetEl.addEventListener(
+    "scroll",
+    () => {
+      sheetEl.classList.add("is-scrolling");
+      window.clearTimeout(hideScrollbar);
+      hideScrollbar = window.setTimeout(() => {
+        sheetEl.classList.remove("is-scrolling");
+      }, 800);
+    },
+    { passive: true }
+  );
+}
 
 function isSoftwareWebGL(): boolean {
   const canvas = document.createElement("canvas");
@@ -570,7 +639,7 @@ function initMap() {
   const current = new MapboxMap({
     container: mapEl,
     accessToken: TOKEN,
-    style: softwareWebGL ? rasterStyle(darkMq.matches) : "mapbox://styles/mapbox/standard",
+    style: softwareWebGL ? rasterStyle(isDarkTheme()) : "mapbox://styles/mapbox/standard",
     center: [SAPPORO_STATION.lng, SAPPORO_STATION.lat],
     zoom: 14,
     maxPitch: 0,
@@ -578,17 +647,13 @@ function initMap() {
     language: softwareWebGL ? undefined : "ja",
     config: softwareWebGL
       ? undefined
-      : { basemap: { lightPreset: darkMq.matches ? "night" : "day" } },
+      : { basemap: { lightPreset: isDarkTheme() ? "night" : "day" } },
     locale: {
       "NavigationControl.ZoomIn": "拡大",
       "NavigationControl.ZoomOut": "縮小",
     },
   });
   current.addControl(new NavigationControl({ showCompass: false }), "top-right");
-  darkMq.addEventListener("change", () => {
-    if (softwareWebGL) current.setStyle(rasterStyle(darkMq.matches));
-    else current.setConfigProperty("basemap", "lightPreset", darkMq.matches ? "night" : "day");
-  });
   originMarker = new Marker({
     element: makeDot("#34C759", 22),
     anchor: "center",

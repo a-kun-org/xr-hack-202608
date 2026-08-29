@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --system-blue: #007aff;
   --system-green: #34c759;
   --system-red: #ff3b30;
@@ -11,31 +12,64 @@
   --sheet: rgba(255, 255, 255, 0.78);
   --sheet-solid: #ffffff;
   --button-label: #fff;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.28);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.48);
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro JP",
     "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --system-blue: #0a84ff;
-    --system-green: #30d158;
-    --system-red: #ff453a;
-    --label: #fff;
-    --secondary-label: rgba(235, 235, 245, 0.6);
-    --tertiary-label: rgba(235, 235, 245, 0.3);
-    --separator: rgba(84, 84, 88, 0.65);
-    --fill: rgba(120, 120, 128, 0.32);
-    --grouped: #1c1c1e;
-    --sheet: rgba(28, 28, 30, 0.78);
-    --sheet-solid: #1c1c1e;
-    --button-label: #fff;
-  }
+:root.theme-dark {
+  color-scheme: dark;
+  --system-blue: #0a84ff;
+  --system-green: #30d158;
+  --system-red: #ff453a;
+  --label: #fff;
+  --secondary-label: rgba(235, 235, 245, 0.6);
+  --tertiary-label: rgba(235, 235, 245, 0.3);
+  --separator: rgba(84, 84, 88, 0.65);
+  --fill: rgba(120, 120, 128, 0.32);
+  --grouped: #1c1c1e;
+  --sheet: rgba(28, 28, 30, 0.78);
+  --sheet-solid: #1c1c1e;
+  --button-label: #fff;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.28);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.5);
 }
 
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 100px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 html,
@@ -94,7 +128,29 @@ body {
   line-height: 1.4;
   padding: 8px 10px;
   border-radius: 10px;
+  color: var(--label);
+  background: var(--sheet-solid);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.mapboxgl-popup-close-button {
+  color: var(--secondary-label);
+}
+
+.mapboxgl-popup-anchor-top .mapboxgl-popup-tip {
+  border-bottom-color: var(--sheet-solid);
+}
+
+.mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip {
+  border-top-color: var(--sheet-solid);
+}
+
+.mapboxgl-popup-anchor-left .mapboxgl-popup-tip {
+  border-right-color: var(--sheet-solid);
+}
+
+.mapboxgl-popup-anchor-right .mapboxgl-popup-tip {
+  border-left-color: var(--sheet-solid);
 }
 
 .signal-popup .mapboxgl-popup-content {
@@ -139,6 +195,21 @@ body {
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   backdrop-filter: saturate(180%) blur(20px);
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.12);
+  scrollbar-color: transparent transparent;
+}
+
+.sheet:hover,
+.sheet.is-scrolling {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.sheet::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+
+.sheet:hover::-webkit-scrollbar-thumb,
+.sheet.is-scrolling::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
 }
 
 .sheet-handle {
@@ -289,11 +360,20 @@ h1 {
   margin-top: 20px;
 }
 
-.result h2 {
+.result h2,
+.appearance h2 {
   font-size: 13px;
   font-weight: 600;
   color: var(--secondary-label);
   margin: 0 16px 8px;
+}
+
+.appearance {
+  margin-top: 20px;
+}
+
+.appearance .segmented {
+  margin-bottom: 0;
 }
 
 .result .grouped {
