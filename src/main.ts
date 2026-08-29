@@ -303,6 +303,10 @@ function setTapMode(mode: "origin" | "dest", announce = true) {
   modeOriginBtn.classList.toggle("active", mode === "origin");
   modeDestBtn.classList.toggle("active", mode === "dest");
   if (!announce) return;
+  if (!TOKEN) {
+    setStatus(TOKEN_ERROR, true);
+    return;
+  }
   setStatus(
     mode === "origin"
       ? "地図をタップして起点を指定してください"
