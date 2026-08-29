@@ -32,6 +32,7 @@ const map = L.map(mapEl, { zoomControl: true }).setView(
   [SAPPORO_STATION.lat, SAPPORO_STATION.lng],
   14
 );
+map.zoomControl.setPosition("topright");
 
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution:
@@ -41,23 +42,23 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 
 const originIcon = L.divIcon({
   className: "",
-  html: `<div style="width:14px;height:14px;border-radius:50%;background:#2bb673;border:2px solid #fff;box-shadow:0 0 0 4px rgba(43,182,115,.35)"></div>`,
-  iconSize: [14, 14],
-  iconAnchor: [7, 7],
+  html: `<div style="width:22px;height:22px;border-radius:50%;background:#34C759;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.25)"></div>`,
+  iconSize: [22, 22],
+  iconAnchor: [11, 11],
 });
 
 const destIcon = L.divIcon({
   className: "",
-  html: `<div style="width:14px;height:14px;border-radius:50%;background:#e07a5f;border:2px solid #fff;box-shadow:0 0 0 4px rgba(224,122,95,.35)"></div>`,
-  iconSize: [14, 14],
-  iconAnchor: [7, 7],
+  html: `<div style="width:22px;height:22px;border-radius:50%;background:#FF3B30;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.25)"></div>`,
+  iconSize: [22, 22],
+  iconAnchor: [11, 11],
 });
 
 const walkerIcon = L.divIcon({
   className: "",
-  html: `<div style="width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid #2bb673;box-shadow:0 0 10px rgba(43,182,115,.8)"></div>`,
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
+  html: `<div style="width:18px;height:18px;border-radius:50%;background:#007AFF;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,122,255,.35)"></div>`,
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
 });
 
 let originMarker = L.marker([SAPPORO_STATION.lat, SAPPORO_STATION.lng], {
@@ -99,8 +100,8 @@ function updateLiveSignals() {
     if (!marker) return;
     const { green, remain } = phaseRemain(now, stop);
     marker.setStyle({
-      color: green ? "#2bb673" : "#e23d3d",
-      fillColor: green ? "#2bb673" : "#e23d3d",
+      color: green ? "#34C759" : "#FF3B30",
+      fillColor: green ? "#34C759" : "#FF3B30",
     });
     marker.setTooltipContent(green ? `青 あと${remain}秒` : `赤 あと${remain}秒`);
   });
@@ -137,17 +138,23 @@ function showResult(result: RouteResult, fitted: boolean) {
   if (routeLine) map.removeLayer(routeLine);
   routeLine = L.polyline(
     result.path.map((p) => [p.lat, p.lng] as [number, number]),
-    { color: "#2bb673", weight: 5, opacity: 0.9 }
+    { color: "#007AFF", weight: 5, opacity: 0.92 }
   ).addTo(map);
-  if (fitted) map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
+  if (fitted) {
+    const wide = window.innerWidth > 720;
+    map.fitBounds(routeLine.getBounds(), {
+      paddingTopLeft: wide ? [420, 24] : [24, 24],
+      paddingBottomRight: wide ? [24, 24] : [24, 280],
+    });
+  }
 
   for (const m of routeSignals) map.removeLayer(m);
   routeSignals = result.signalStops.map((stop) => {
     const marker = L.circleMarker([stop.lat, stop.lng], {
       radius: 7,
-      color: "#e23d3d",
+      color: "#FF3B30",
       weight: 2,
-      fillColor: "#e23d3d",
+      fillColor: "#FF3B30",
       fillOpacity: 0.9,
     }).addTo(map);
     marker.bindTooltip("", { permanent: false, direction: "top" });
@@ -231,9 +238,9 @@ async function loadGraph(): Promise<void> {
 
   L.circle([graph.origin.lat, graph.origin.lng], {
     radius: graph.maxRadiusM,
-    color: "#2bb673",
+    color: "#007AFF",
     weight: 1,
-    fillColor: "#2bb673",
+    fillColor: "#007AFF",
     fillOpacity: 0.04,
     interactive: false,
   }).addTo(map);

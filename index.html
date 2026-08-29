@@ -2,33 +2,39 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>信号待ち込み最速徒歩ルート</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;600;700&display=swap"
-      rel="stylesheet"
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
+    <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>信号待ち込み最速徒歩ルート</title>
   </head>
   <body>
     <div id="app">
-      <aside class="panel">
-        <div class="title-row">
-          <h1>信号待ち込み<br />最速徒歩ルート</h1>
+      <div id="map" role="application" aria-label="地図"></div>
+      <aside class="sheet" aria-label="ルート設定">
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <header class="sheet-header">
+          <div>
+            <p class="eyebrow">徒歩ルート</p>
+            <h1>信号待ち込み最短</h1>
+          </div>
           <div class="live" aria-live="polite">
-            <span class="live-dot"></span>
+            <span class="live-dot" aria-hidden="true"></span>
             <time id="clock">--:--:--</time>
           </div>
-        </div>
+        </header>
         <p class="lead">
-          いま出発した場合の到着時刻で信号の青／赤を仮定し、待ち込みの所要時間が最短の徒歩ルートを出します。
+          いま出発した場合の到着時刻で信号を仮定し、待ち込みの所要時間が最短の徒歩ルートを表示します。
         </p>
-        <div class="tap-mode" role="group" aria-label="地図タップの対象">
-          <button type="button" id="mode-origin" class="mode-btn">起点を指定</button>
-          <button type="button" id="mode-dest" class="mode-btn active">終点を指定</button>
+        <div class="segmented" role="group" aria-label="地図タップの対象">
+          <button type="button" id="mode-origin" class="mode-btn">起点</button>
+          <button type="button" id="mode-dest" class="mode-btn active">終点</button>
         </div>
-        <dl class="meta">
+        <dl class="grouped">
           <div>
             <dt>起点</dt>
             <dd id="origin-label">札幌駅</dd>
@@ -41,21 +47,20 @@
         <p id="status" class="status" role="status"></p>
         <button id="search-btn" type="button" disabled>いま出発で検索</button>
         <section id="result" class="result" hidden>
-          <h2>この出発時刻の結果</h2>
-          <ul>
-            <li>出発 <strong id="r-depart">—</strong></li>
-            <li>到着見込み <strong id="r-arrive">—</strong></li>
-            <li>総所要時間 <strong id="r-total">—</strong></li>
-            <li>歩行時間 <strong id="r-walk">—</strong></li>
-            <li>信号待ち <strong id="r-wait">—</strong></li>
-            <li>通過信号数 <strong id="r-signals">—</strong></li>
+          <h2>この出発時刻</h2>
+          <ul class="grouped">
+            <li><span>出発</span><strong id="r-depart">—</strong></li>
+            <li><span>到着見込み</span><strong id="r-arrive">—</strong></li>
+            <li><span>所要時間</span><strong id="r-total">—</strong></li>
+            <li><span>歩行</span><strong id="r-walk">—</strong></li>
+            <li><span>信号待ち</span><strong id="r-wait">—</strong></li>
+            <li><span>通過信号</span><strong id="r-signals">—</strong></li>
           </ul>
           <p class="note">
             現示は JARTIC のサイクル長と交差点ごとの位相差によるシミュレーションです。警察のリアルタイム現示ではありません。
           </p>
         </section>
       </aside>
-      <div id="map"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
