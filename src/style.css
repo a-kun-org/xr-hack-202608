@@ -61,20 +61,25 @@ body {
   background: var(--grouped);
 }
 
-.leaflet-control-zoom {
+.mapboxgl-ctrl-group {
   border: none !important;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
   border-radius: 12px !important;
   overflow: hidden;
 }
 
-.leaflet-bar a {
+.mapboxgl-ctrl-group button {
   width: 44px !important;
   height: 44px !important;
-  line-height: 44px !important;
-  color: var(--system-blue) !important;
-  background: var(--sheet-solid) !important;
-  border-bottom-color: var(--separator) !important;
+}
+
+.mapboxgl-popup-content {
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 10px;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
 }
 
 .sheet {
