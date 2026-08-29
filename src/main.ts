@@ -4,20 +4,26 @@ import "./style.css";
 import {
   distanceFromOriginM,
   findRoute,
+  formatClock,
   formatDuration,
   normalizeGraph,
+  phaseRemain,
+  pointAtElapsed,
   snapToNode,
   type GraphData,
   type LatLng,
+  type RouteResult,
 } from "./router";
 
 const SAPPORO_STATION: LatLng = { lat: 43.0687, lng: 141.3508 };
+const REFRESH_MS = 12000;
 
 const mapEl = document.getElementById("map")!;
 const destLabel = document.getElementById("dest-label")!;
 const statusEl = document.getElementById("status")!;
 const searchBtn = document.getElementById("search-btn") as HTMLButtonElement;
 const resultEl = document.getElementById("result")!;
+const clockEl = document.getElementById("clock")!;
 
 const map = L.map(mapEl, { zoomControl: true }).setView(
   [SAPPORO_STATION.lat, SAPPORO_STATION.lng],
@@ -44,6 +50,13 @@ const destIcon = L.divIcon({
   iconAnchor: [7, 7],
 });
 
+const walkerIcon = L.divIcon({
+  className: "",
+  html: `<div style="width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid #2bb673;box-shadow:0 0 10px rgba(43,182,115,.8)"></div>`,
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+});
+
 L.marker([SAPPORO_STATION.lat, SAPPORO_STATION.lng], {
   icon: originIcon,
   title: "札幌駅",
@@ -53,7 +66,10 @@ let graph: GraphData | null = null;
 let dest: LatLng | null = null;
 let destMarker: L.Marker | null = null;
 let routeLine: L.Polyline | null = null;
-let signalLayer: L.LayerGroup | null = null;
+let walkerMarker: L.Marker | null = null;
+let routeSignals: L.CircleMarker[] = [];
+let lastResult: RouteResult | null = null;
+let refreshTimer: number | null = null;
 
 function setStatus(msg: string, isError = false) {
   statusEl.textContent = msg;
@@ -62,6 +78,128 @@ function setStatus(msg: string, isError = false) {
 
 function fmtCoord(p: LatLng): string {
   return `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`;
+}
+
+function tickClock() {
+  clockEl.textContent = formatClock();
+  updateLiveSignals();
+  updateWalker();
+}
+
+function updateLiveSignals() {
+  if (!lastResult) return;
+  const now = Date.now() / 1000;
+  lastResult.signalStops.forEach((stop, i) => {
+    const marker = routeSignals[i];
+    if (!marker) return;
+    const { green, remain } = phaseRemain(now, stop);
+    marker.setStyle({
+      color: green ? "#2bb673" : "#e23d3d",
+      fillColor: green ? "#2bb673" : "#e23d3d",
+    });
+    marker.setTooltipContent(green ? `青 あと${remain}秒` : `赤 あと${remain}秒`);
+  });
+}
+
+function updateWalker() {
+  if (!lastResult || !walkerMarker) return;
+  const elapsed = Date.now() / 1000 - lastResult.departAt;
+  const p = pointAtElapsed(
+    lastResult.path,
+    lastResult.nodeElapsed,
+    elapsed,
+    lastResult.nodeWait
+  );
+  walkerMarker.setLatLng([p.lat, p.lng]);
+}
+
+function clearRoute() {
+  if (routeLine) {
+    map.removeLayer(routeLine);
+    routeLine = null;
+  }
+  if (walkerMarker) {
+    map.removeLayer(walkerMarker);
+    walkerMarker = null;
+  }
+  for (const m of routeSignals) map.removeLayer(m);
+  routeSignals = [];
+  lastResult = null;
+}
+
+function showResult(result: RouteResult, fitted: boolean) {
+  lastResult = result;
+  if (routeLine) map.removeLayer(routeLine);
+  routeLine = L.polyline(
+    result.path.map((p) => [p.lat, p.lng] as [number, number]),
+    { color: "#2bb673", weight: 5, opacity: 0.9 }
+  ).addTo(map);
+  if (fitted) map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
+
+  for (const m of routeSignals) map.removeLayer(m);
+  routeSignals = result.signalStops.map((stop) => {
+    const marker = L.circleMarker([stop.lat, stop.lng], {
+      radius: 7,
+      color: "#e23d3d",
+      weight: 2,
+      fillColor: "#e23d3d",
+      fillOpacity: 0.9,
+    }).addTo(map);
+    marker.bindTooltip("", { permanent: false, direction: "top" });
+    return marker;
+  });
+  updateLiveSignals();
+
+  if (!walkerMarker) {
+    walkerMarker = L.marker(result.path[0], { icon: walkerIcon, zIndexOffset: 800 }).addTo(map);
+  }
+  updateWalker();
+
+  const depart = new Date(result.departAt * 1000);
+  const arrive = new Date((result.departAt + result.totalSec) * 1000);
+  (document.getElementById("r-depart")!).textContent = formatClock(depart);
+  (document.getElementById("r-arrive")!).textContent = formatClock(arrive);
+  (document.getElementById("r-total")!).textContent = formatDuration(result.totalSec);
+  (document.getElementById("r-walk")!).textContent = formatDuration(result.walkSec);
+  (document.getElementById("r-wait")!).textContent = formatDuration(result.waitSec);
+  (document.getElementById("r-signals")!).textContent = String(result.signalCount);
+  resultEl.hidden = false;
+}
+
+function searchRoute(silent = false) {
+  if (!graph || !dest) return;
+
+  const startId = snapToNode(graph, graph.origin, 120);
+  const endId = snapToNode(graph, dest, 80);
+  if (startId === null) {
+    setStatus("起点を道路ネットワークに接続できませんでした", true);
+    return;
+  }
+  if (endId === null) {
+    setStatus("終点付近に歩行可能な道が見つかりません（別の地点を試してください）", true);
+    return;
+  }
+
+  if (!silent) setStatus("いまの時刻で経路を計算中…");
+  const result = findRoute(graph, startId, endId, Date.now() / 1000);
+  if (!result) {
+    setStatus("経路が見つかりませんでした", true);
+    return;
+  }
+
+  showResult(result, !silent);
+  setStatus(
+    silent
+      ? `${formatClock()} 時点でルートを更新しました`
+      : "いま出発する場合のルートです（約12秒ごとに再計算）"
+  );
+}
+
+function scheduleRefresh() {
+  if (refreshTimer !== null) window.clearInterval(refreshTimer);
+  refreshTimer = window.setInterval(() => {
+    if (dest && graph) searchRoute(true);
+  }, REFRESH_MS);
 }
 
 async function loadGraph(): Promise<void> {
@@ -78,21 +216,6 @@ async function loadGraph(): Promise<void> {
     fillOpacity: 0.04,
     interactive: false,
   }).addTo(map);
-
-  if (graph.signals.length > 0) {
-    signalLayer = L.layerGroup();
-    for (const s of graph.signals) {
-      L.circleMarker([s.lat, s.lng], {
-        radius: 3,
-        color: "#c9a227",
-        weight: 1,
-        fillColor: "#c9a227",
-        fillOpacity: 0.5,
-        opacity: 0.7,
-      }).addTo(signalLayer);
-    }
-    signalLayer.addTo(map);
-  }
 
   setStatus("地図をタップして終点を指定してください");
 }
@@ -116,56 +239,17 @@ map.on("click", (e) => {
 
   searchBtn.disabled = false;
   resultEl.hidden = true;
-  if (routeLine) {
-    map.removeLayer(routeLine);
-    routeLine = null;
-  }
-  setStatus("終点を設定しました。「ルート検索」を押してください");
+  clearRoute();
+  setStatus("終点を設定しました。「いま出発で検索」を押してください");
 });
 
 searchBtn.addEventListener("click", () => {
-  if (!graph || !dest) return;
-
-  const startId = snapToNode(graph, graph.origin, 120);
-  const endId = snapToNode(graph, dest, 80);
-  if (startId === null) {
-    setStatus("起点を道路ネットワークに接続できませんでした", true);
-    return;
-  }
-  if (endId === null) {
-    setStatus("終点付近に歩行可能な道が見つかりません（別の地点を試してください）", true);
-    return;
-  }
-
-  setStatus("経路を計算中…");
-  const result = findRoute(graph, startId, endId);
-  if (!result) {
-    setStatus("経路が見つかりませんでした", true);
-    return;
-  }
-
-  if (routeLine) map.removeLayer(routeLine);
-  routeLine = L.polyline(
-    result.path.map((p) => [p.lat, p.lng] as [number, number]),
-    { color: "#2bb673", weight: 5, opacity: 0.9 }
-  ).addTo(map);
-  map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
-
-  (document.getElementById("r-total")!).textContent = formatDuration(
-    result.totalSec
-  );
-  (document.getElementById("r-walk")!).textContent = formatDuration(
-    result.walkSec
-  );
-  (document.getElementById("r-wait")!).textContent = formatDuration(
-    result.waitSec
-  );
-  (document.getElementById("r-signals")!).textContent = String(
-    result.signalCount
-  );
-  resultEl.hidden = false;
-  setStatus("ルートを表示しました");
+  searchRoute(false);
+  scheduleRefresh();
 });
+
+tickClock();
+window.setInterval(tickClock, 1000);
 
 loadGraph().catch((err) => {
   console.error(err);

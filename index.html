@@ -14,9 +14,15 @@
   <body>
     <div id="app">
       <aside class="panel">
-        <h1>信号待ち込み<br />最速徒歩ルート</h1>
+        <div class="title-row">
+          <h1>信号待ち込み<br />最速徒歩ルート</h1>
+          <div class="live" aria-live="polite">
+            <span class="live-dot"></span>
+            <time id="clock">--:--:--</time>
+          </div>
+        </div>
         <p class="lead">
-          札幌駅から、地図をタップした地点まで。歩行時間と信号の予想待ちを足した所要時間が最短のルートを探します。
+          いま出発した場合の到着時刻で信号の青／赤を仮定し、待ち込みの所要時間が最短の徒歩ルートを出します。
         </p>
         <dl class="meta">
           <div>
@@ -29,17 +35,19 @@
           </div>
         </dl>
         <p id="status" class="status" role="status"></p>
-        <button id="search-btn" type="button" disabled>ルート検索</button>
+        <button id="search-btn" type="button" disabled>いま出発で検索</button>
         <section id="result" class="result" hidden>
-          <h2>結果</h2>
+          <h2>この出発時刻の結果</h2>
           <ul>
+            <li>出発 <strong id="r-depart">—</strong></li>
+            <li>到着見込み <strong id="r-arrive">—</strong></li>
             <li>総所要時間 <strong id="r-total">—</strong></li>
             <li>歩行時間 <strong id="r-walk">—</strong></li>
-            <li>予想信号待ち <strong id="r-wait">—</strong></li>
+            <li>信号待ち <strong id="r-wait">—</strong></li>
             <li>通過信号数 <strong id="r-signals">—</strong></li>
           </ul>
           <p class="note">
-            待ち時間は JARTIC 交差点制御情報のサイクル長から、ランダム到着を仮定した予想値です（リアルタイム現示ではありません）。
+            現示は JARTIC のサイクル長と交差点ごとの位相差によるシミュレーションです。警察のリアルタイム現示ではありません。
           </p>
         </section>
       </aside>

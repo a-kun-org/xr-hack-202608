@@ -19,6 +19,7 @@ export type GraphData = {
   origin: LatLng;
   maxRadiusM: number;
   walkSpeedMps: number;
+  defaultCycleSec: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
   signals: LatLng[];
@@ -30,6 +31,7 @@ type RawGraph = {
   origin: LatLng;
   maxRadiusM: number;
   walkSpeedMps: number;
+  defaultCycleSec?: number;
   nodes: GraphNode[] | [number, number, number][];
   edges:
     | GraphEdge[]
@@ -37,12 +39,25 @@ type RawGraph = {
   signals: LatLng[] | [number, number][];
 };
 
+export type SignalStop = {
+  lat: number;
+  lng: number;
+  waitSec: number;
+  cycle: number;
+  green: number;
+  offset: number;
+};
+
 export type RouteResult = {
   path: LatLng[];
+  nodeElapsed: number[];
+  nodeWait: number[];
   totalSec: number;
   walkSec: number;
   waitSec: number;
   signalCount: number;
+  departAt: number;
+  signalStops: SignalStop[];
 };
 
 export function normalizeGraph(raw: RawGraph): GraphData {
@@ -73,10 +88,57 @@ export function normalizeGraph(raw: RawGraph): GraphData {
     origin: raw.origin,
     maxRadiusM: raw.maxRadiusM,
     walkSpeedMps: raw.walkSpeedMps,
+    defaultCycleSec: raw.defaultCycleSec ?? 125,
     nodes,
     edges,
     signals,
   };
+}
+
+export type SignalTiming = {
+  cycle: number;
+  green: number;
+  offset: number;
+};
+
+/** Derive a repeating phase from JARTIC cycle + node id (no live controller feed). */
+export function timingFor(
+  nodeId: number,
+  expectedWait: number,
+  defaultCycle: number
+): SignalTiming {
+  const cycle = Math.round(
+    expectedWait > 0
+      ? Math.min(200, Math.max(40, expectedWait * 4.5))
+      : defaultCycle
+  );
+  return {
+    cycle,
+    green: cycle / 3,
+    offset: ((nodeId * 17 + 31) % cycle + cycle) % cycle,
+  };
+}
+
+/** Seconds until green at absolute unix time. 0 if already green. */
+export function waitIfRed(atUnix: number, t: SignalTiming): number {
+  const phase = ((atUnix + t.offset) % t.cycle + t.cycle) % t.cycle;
+  if (phase < t.green) return 0;
+  return t.cycle - phase;
+}
+
+export function isGreenAt(atUnix: number, t: SignalTiming): boolean {
+  return waitIfRed(atUnix, t) === 0;
+}
+
+export function phaseRemain(atUnix: number, t: SignalTiming): {
+  green: boolean;
+  remain: number;
+} {
+  const phase = ((atUnix + t.offset) % t.cycle + t.cycle) % t.cycle;
+  if (phase < t.green) {
+    return { green: true, remain: Math.max(1, Math.ceil(t.green - phase)) };
+  }
+  return { green: false, remain: Math.max(1, Math.ceil(t.cycle - phase)) };
 }
 
 function haversineM(a: LatLng, b: LatLng): number {
@@ -131,20 +193,25 @@ function buildAdj(graph: GraphData): Map<number, Adj[]> {
   return adj;
 }
 
-/** Binary-heap Dijkstra on walkSec + waitSec. */
+/** Time-dependent Dijkstra: wait is remaining red at arrival, not average. */
 export function findRoute(
   graph: GraphData,
   startId: number,
-  endId: number
+  endId: number,
+  departAt = Date.now() / 1000
 ): RouteResult | null {
   if (startId === endId) {
     const n = graph.nodes.find((x) => x.id === startId)!;
     return {
       path: [{ lat: n.lat, lng: n.lng }],
+      nodeElapsed: [0],
+      nodeWait: [0],
       totalSec: 0,
       walkSec: 0,
       waitSec: 0,
       signalCount: 0,
+      departAt,
+      signalStops: [],
     };
   }
 
@@ -201,11 +268,17 @@ export function findRoute(
     if (cur.id === endId) break;
 
     for (const edge of adj.get(cur.id) ?? []) {
-      const nd = d + edge.walkSec + edge.waitSec;
+      const arrive = d + edge.walkSec;
+      let wait = 0;
+      if (edge.isSignal && edge.waitSec > 0) {
+        const timing = timingFor(edge.to, edge.waitSec, graph.defaultCycleSec);
+        wait = waitIfRed(departAt + arrive, timing);
+      }
+      const nd = arrive + wait;
       if (nd < (dist.get(edge.to) ?? Infinity)) {
         dist.set(edge.to, nd);
         walkAcc.set(edge.to, (walkAcc.get(cur.id) ?? 0) + edge.walkSec);
-        waitAcc.set(edge.to, (waitAcc.get(cur.id) ?? 0) + edge.waitSec);
+        waitAcc.set(edge.to, (waitAcc.get(cur.id) ?? 0) + wait);
         sigAcc.set(
           edge.to,
           (sigAcc.get(cur.id) ?? 0) + (edge.isSignal ? 1 : 0)
@@ -227,15 +300,46 @@ export function findRoute(
   }
   ids.reverse();
 
+  const path = ids.map((id) => {
+    const n = nodeById.get(id)!;
+    return { lat: n.lat, lng: n.lng };
+  });
+  const nodeElapsed = ids.map((id) => dist.get(id) ?? 0);
+  const nodeWait = ids.map((id, i) => {
+    if (i === 0) return 0;
+    const walk = walkAcc.get(id)! - walkAcc.get(ids[i - 1])!;
+    return (dist.get(id) ?? 0) - (dist.get(ids[i - 1]) ?? 0) - walk;
+  });
+
+  const signalStops: SignalStop[] = [];
+  const seenStop = new Set<number>();
+  for (let i = 1; i < ids.length; i++) {
+    const from = ids[i - 1];
+    const to = ids[i];
+    const edge = (adj.get(from) ?? []).find((e) => e.to === to);
+    if (!edge?.isSignal || edge.waitSec <= 0 || seenStop.has(to)) continue;
+    seenStop.add(to);
+    const timing = timingFor(to, edge.waitSec, graph.defaultCycleSec);
+    const arrive = (dist.get(from) ?? 0) + edge.walkSec;
+    const n = nodeById.get(to)!;
+    signalStops.push({
+      lat: n.lat,
+      lng: n.lng,
+      waitSec: waitIfRed(departAt + arrive, timing),
+      ...timing,
+    });
+  }
+
   return {
-    path: ids.map((id) => {
-      const n = nodeById.get(id)!;
-      return { lat: n.lat, lng: n.lng };
-    }),
+    path,
+    nodeElapsed,
+    nodeWait,
     totalSec: dist.get(endId)!,
     walkSec: walkAcc.get(endId)!,
     waitSec: waitAcc.get(endId)!,
     signalCount: sigAcc.get(endId)!,
+    departAt,
+    signalStops,
   };
 }
 
@@ -245,4 +349,39 @@ export function formatDuration(sec: number): string {
   const r = s % 60;
   if (m === 0) return `${r}秒`;
   return `${m}分${r.toString().padStart(2, "0")}秒`;
+}
+
+export function formatClock(date = new Date()): string {
+  return date.toLocaleTimeString("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+/** Position along the timed path at elapsed seconds from departure. */
+export function pointAtElapsed(
+  path: LatLng[],
+  nodeElapsed: number[],
+  elapsed: number,
+  waits: number[] = []
+): LatLng {
+  if (path.length === 0) return { lat: 0, lng: 0 };
+  if (elapsed <= 0 || path.length === 1) return path[0];
+  for (let i = 1; i < path.length; i++) {
+    const t1 = nodeElapsed[i];
+    if (elapsed > t1) continue;
+    const wait = waits[i] ?? 0;
+    const arrive = t1 - wait;
+    if (elapsed >= arrive) return path[i];
+    const t0 = nodeElapsed[i - 1];
+    const span = arrive - t0;
+    const u = span <= 0 ? 1 : (elapsed - t0) / span;
+    return {
+      lat: path[i - 1].lat + (path[i].lat - path[i - 1].lat) * u,
+      lng: path[i - 1].lng + (path[i].lng - path[i - 1].lng) * u,
+    };
+  }
+  return path[path.length - 1];
 }
