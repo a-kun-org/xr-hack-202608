@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""検証: 札幌駅 → 札幌高等裁判所 の歩行者信号検知（ルータと同様に hubs も見る）。"""
+"""検証: 札幌駅 → 札幌高等裁判所。横断歩道上の信号待ちだけを正解とする。"""
 from __future__ import annotations
 
 import heapq
@@ -12,12 +12,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STATION = (43.0687, 141.3508)
 COURT = (43.05983, 141.34008)
-ON_PATH_M = 12.0
-# ルータの signalClusterM と同じ。同一交差点の複数横断は1待ちにまとめる
+# 経路が横断ウェイ上にあるとみなす距離
+ON_CROSSING_M = 6.0
 HIT_M = 40.0
-# 車用信号は交差点中央。経路が本当に交差点を通るときだけ必須
-VEH_PATH_M = 18.0
-VEH_HIT_M = 40.0
 
 
 def hav(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -59,34 +56,11 @@ def timing_for(node_id: int, cycle_sec: float, default_cycle: float = 125.0, gre
     return cycle, green, offset
 
 
-def build_hub_grid(hubs, cell=0.00015):
-    g = defaultdict(list)
-    for h in hubs:
-        g[(int(h[0] / cell), int(h[1] / cell))].append(h)
-    return g
-
-
-def hub_near(mid, hub_grid, max_m, cell=0.00015):
-    i0, j0 = int(mid[0] / cell), int(mid[1] / cell)
-    best, best_d = None, max_m
-    for di in (-1, 0, 1):
-        for dj in (-1, 0, 1):
-            for h in hub_grid.get((i0 + di, j0 + dj), []):
-                d = hav(mid, (h[0], h[1]))
-                if d <= best_d:
-                    best_d = d
-                    best = h
-    return best
-
-
 def route(graph: dict, start, end):
     nodes = {n[0]: (n[1], n[2]) for n in graph["nodes"]}
     adj = defaultdict(list)
     for e in graph["edges"]:
         adj[e[0]].append({"to": e[1], "walk": e[2], "cycle": e[3], "sig": e[4] == 1})
-    hubs = graph.get("hubs") or []
-    hub_grid = build_hub_grid(hubs)
-    promote_m = float(graph.get("promoteSignalM", 18))
     cluster_m = float(graph.get("signalClusterM", 40))
 
     def snap(p, maxd=120):
@@ -117,20 +91,16 @@ def route(graph: dict, start, end):
             v = edge["to"]
             vla, vln = nodes[v]
             mid = ((ula + vla) / 2, (uln + vln) / 2)
-            hub = hub_near(mid, hub_grid, promote_m)
-            is_sig = edge["sig"] or hub is not None
-            cycle = edge["cycle"] if edge["sig"] else (hub[2] if hub else edge["cycle"])
             wait = 0.0
             charged = last_sig[u]
-            if is_sig:
-                anchor = (hub[0], hub[1]) if hub else mid
+            if edge["sig"]:
                 prev_at = last_sig[u]
-                fresh = prev_at is None or hav(prev_at, anchor) > cluster_m
+                fresh = prev_at is None or hav(prev_at, mid) > cluster_m
                 if fresh:
-                    cy, gr, off = timing_for(v, cycle)
+                    cy, gr, off = timing_for(v, edge["cycle"])
                     phase = (d + off) % cy
                     wait = 0.0 if phase < gr else cy - phase
-                    charged = anchor
+                    charged = mid
             nd = d + wait + edge["walk"]
             if nd < dist.get(v, 1e18):
                 dist[v] = nd
@@ -152,21 +122,19 @@ def route(graph: dict, start, end):
 
     sig_pts = []
     last_stop = None
+    false_sidewalk = 0
     for a, b in zip(ids, ids[1:]):
         edge = next(x for x in adj[a] if x["to"] == b)
+        if not edge["sig"]:
+            continue
         mid = (
             (nodes[a][0] + nodes[b][0]) / 2,
             (nodes[a][1] + nodes[b][1]) / 2,
         )
-        hub = hub_near(mid, hub_grid, promote_m)
-        is_sig = edge["sig"] or hub is not None
-        if not is_sig:
+        if last_stop and hav(last_stop, mid) <= cluster_m:
             continue
-        anchor = (hub[0], hub[1]) if hub else mid
-        if last_stop and hav(last_stop, anchor) <= cluster_m:
-            continue
-        last_stop = anchor
-        sig_pts.append(nodes[a])
+        last_stop = mid
+        sig_pts.append(mid)
 
     return {
         "snap": (sd, ed),
@@ -174,6 +142,9 @@ def route(graph: dict, start, end):
         "signalCount": len(sig_pts),
         "sig_pts": sig_pts,
         "path": [nodes[i] for i in ids],
+        "path_edges": list(zip(ids, ids[1:])),
+        "adj": adj,
+        "nodes": nodes,
     }
 
 
@@ -196,14 +167,12 @@ def main() -> int:
         elif el["type"] == "way" and is_crossing_way(el.get("tags", {})):
             cross_ways.append(el)
 
-    def dist_to_path(p):
-        return min(hav(p, q) for q in result["path"])
-
     def nearest_sig(p):
         if not result["sig_pts"]:
             return 1e9
         return min(hav(p, s) for s in result["sig_pts"])
 
+    # 経路が実際に踏んだ信号横断のみを期待値にする
     expected = []
     for w in cross_ways:
         tags = w.get("tags", {})
@@ -216,15 +185,25 @@ def main() -> int:
             sum(osm_nodes[n][0] for n in nds) / len(nds),
             sum(osm_nodes[n][1] for n in nds) / len(nds),
         )
-        d_path = dist_to_path(mid)
-        if d_path > ON_PATH_M:
-            continue
         has_tag = tags.get("crossing") in {"traffic_signals", "toucan"} or tags.get(
             "crossing:signals"
         ) == "yes"
         near_veh = any(hav(mid, v) <= 35 for v in veh)
         near_ped = any(hav(mid, v) <= 25 for v in ped)
         if not (has_tag or near_veh or near_ped):
+            continue
+        # 経路エッジ中点が横断中心に十分近いか
+        d_path = min(hav(mid, q) for q in result["path"])
+        on_path = False
+        for a, b in result["path_edges"]:
+            emid = (
+                (result["nodes"][a][0] + result["nodes"][b][0]) / 2,
+                (result["nodes"][a][1] + result["nodes"][b][1]) / 2,
+            )
+            if hav(mid, emid) <= ON_CROSSING_M:
+                on_path = True
+                break
+        if not on_path:
             continue
         expected.append((d_path, mid, tags, w["id"]))
 
@@ -238,29 +217,42 @@ def main() -> int:
             misses += 1
             miss_list.append((wid, mid, d_path, ns, tags))
 
+    # 偽陽性: 信号待ちがどの横断からも離れている
+    false_pos = 0
+    for sp in result["sig_pts"]:
+        near = False
+        for w in cross_ways:
+            tags = w.get("tags", {})
+            if is_uncontrolled(tags):
+                continue
+            nds = [n for n in w.get("nodes", []) if n in osm_nodes]
+            if len(nds) < 2:
+                continue
+            mid = (
+                sum(osm_nodes[n][0] for n in nds) / len(nds),
+                sum(osm_nodes[n][1] for n in nds) / len(nds),
+            )
+            if hav(sp, mid) <= 20:
+                near = True
+                break
+        if not near:
+            false_pos += 1
+            print(f"  FALSE_WAIT ({sp[0]:.5f},{sp[1]:.5f})")
+
     print(
         f"station→court snap={result['snap'][0]:.0f}/{result['snap'][1]:.0f}m "
         f"total={result['total']:.0f}s signals={result['signalCount']}"
     )
     print(
-        f"on-path signalized crossings (≤{ON_PATH_M}m): "
-        f"{len(expected)} hit={hits} miss={misses}"
+        f"walked signalized crossings: {len(expected)} hit={hits} miss={misses} "
+        f"false_wait={false_pos}"
     )
     for wid, mid, d_path, ns, tags in miss_list:
         t = {k: tags.get(k) for k in ("footway", "crossing", "crossing:signals")}
         print(f"  MISS way={wid} ({mid[0]:.5f},{mid[1]:.5f}) dPath={d_path:.0f} dSig={ns:.0f} {t}")
 
-    veh_miss = 0
-    for v in veh:
-        if dist_to_path(v) > VEH_PATH_M:
-            continue
-        if nearest_sig(v) > VEH_HIT_M:
-            veh_miss += 1
-            print(f"  VEH_NO_SIG ({v[0]:.5f},{v[1]:.5f}) dPath={dist_to_path(v):.0f}")
-
-    print(f"vehicle signals near path without ped wait: {veh_miss}")
     rate = hits / len(expected) if expected else 1.0
-    ok = misses == 0 and veh_miss == 0
+    ok = misses == 0 and false_pos == 0
     print(f"hit_rate={rate:.0%} {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 

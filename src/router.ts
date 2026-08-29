@@ -214,49 +214,6 @@ function buildAdj(graph: GraphData): Map<number, Adj[]> {
   return adj;
 }
 
-type HubHit = { cycleSec: number; lat: number; lng: number };
-
-function buildHubGrid(
-  hubs: GraphData["hubs"],
-  cell = 0.00015
-): Map<string, GraphData["hubs"]> {
-  const grid = new Map<string, GraphData["hubs"]>();
-  for (const h of hubs) {
-    const key = `${Math.floor(h.lat / cell)},${Math.floor(h.lng / cell)}`;
-    const bucket = grid.get(key) ?? [];
-    bucket.push(h);
-    grid.set(key, bucket);
-  }
-  return grid;
-}
-
-/** Nearest signalized-crossing hub within promote radius, if any. */
-function hubNear(
-  mid: LatLng,
-  hubGrid: Map<string, GraphData["hubs"]>,
-  maxM: number,
-  cell = 0.00015
-): HubHit | null {
-  const i0 = Math.floor(mid.lat / cell);
-  const j0 = Math.floor(mid.lng / cell);
-  let best: HubHit | null = null;
-  let bestD = maxM;
-  for (let di = -1; di <= 1; di++) {
-    for (let dj = -1; dj <= 1; dj++) {
-      const bucket = hubGrid.get(`${i0 + di},${j0 + dj}`);
-      if (!bucket) continue;
-      for (const h of bucket) {
-        const d = haversineM(mid, h);
-        if (d <= bestD) {
-          bestD = d;
-          best = { cycleSec: h.cycleSec, lat: h.lat, lng: h.lng };
-        }
-      }
-    }
-  }
-  return best;
-}
-
 /** Time-dependent Dijkstra: wait is remaining red at arrival, not average. */
 export function findRoute(
   graph: GraphData,
@@ -280,13 +237,12 @@ export function findRoute(
   }
 
   const adj = buildAdj(graph);
-  const hubGrid = buildHubGrid(graph.hubs);
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   const dist = new Map<number, number>();
   const prev = new Map<number, number>();
   const walkAcc = new Map<number, number>();
   const waitAcc = new Map<number, number>();
-  /** Last charged signal hub position along the best path to this node. */
+  /** Last charged signal position along the best path to this node. */
   const lastSigAt = new Map<number, LatLng | null>();
 
   type Item = { id: number; cost: number };
@@ -340,28 +296,23 @@ export function findRoute(
         lat: (fromNode.lat + toNode.lat) / 2,
         lng: (fromNode.lng + toNode.lng) / 2,
       };
-      const hub = hubNear(mid, hubGrid, graph.promoteSignalM);
-      const isSig = edge.isSignal || hub !== null;
-      const cycleSec = edge.isSignal
-        ? edge.cycleSec
-        : hub?.cycleSec ?? edge.cycleSec;
 
       let wait = 0;
       let chargedHere: LatLng | null = lastSigAt.get(cur.id) ?? null;
-      if (isSig) {
-        const anchor = hub ?? mid;
+      // 横断歩道エッジのみ待つ（交差点脇の歩道では待たない）
+      if (edge.isSignal) {
         const prevAt = lastSigAt.get(cur.id);
         const fresh =
-          !prevAt || haversineM(prevAt, anchor) > graph.signalClusterM;
+          !prevAt || haversineM(prevAt, mid) > graph.signalClusterM;
         if (fresh) {
           const timing = timingFor(
             edge.to,
-            cycleSec,
+            edge.cycleSec,
             graph.defaultCycleSec,
             graph.defaultPedGreenSec
           );
           wait = waitIfRed(departAt + d, timing);
-          chargedHere = anchor;
+          chargedHere = mid;
         }
       }
 
@@ -406,28 +357,21 @@ export function findRoute(
     const from = ids[i - 1];
     const to = ids[i];
     const edge = (adj.get(from) ?? []).find((e) => e.to === to);
-    if (!edge) continue;
+    if (!edge?.isSignal) continue;
     const fromNode = nodeById.get(from)!;
     const toNode = nodeById.get(to)!;
     const mid = {
       lat: (fromNode.lat + toNode.lat) / 2,
       lng: (fromNode.lng + toNode.lng) / 2,
     };
-    const hub = hubNear(mid, hubGrid, graph.promoteSignalM);
-    const isSig = edge.isSignal || hub !== null;
-    if (!isSig) continue;
-    const anchor = hub ?? mid;
-    if (lastStopAt && haversineM(lastStopAt, anchor) <= graph.signalClusterM) {
+    if (lastStopAt && haversineM(lastStopAt, mid) <= graph.signalClusterM) {
       continue;
     }
-    lastStopAt = anchor;
+    lastStopAt = mid;
     signalIndex += 1;
-    const cycleSec = edge.isSignal
-      ? edge.cycleSec
-      : hub?.cycleSec ?? edge.cycleSec;
     const timing = timingFor(
       to,
-      cycleSec,
+      edge.cycleSec,
       graph.defaultCycleSec,
       graph.defaultPedGreenSec
     );

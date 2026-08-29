@@ -36,9 +36,7 @@ DEFAULT_PED_GREEN = 15.0  # 歩行者青（点滅は含めない）
 NEAR_SIGNAL_M = 18.0
 # 車用信号は交差点中央寄りなので、横断歩道端までやや広めに見る
 NEAR_VEHICLE_SIGNAL_M = 30.0
-# 経路が横断中央を避けて並行歩道を通る場合の信号付与半径
-PROMOTE_SIGNAL_M = 18.0
-# 同一交差点で連続待ちしないための統合距離（ルータ側でも使用）
+# 同一交差点で連続待ちしないための統合距離
 SIGNAL_CLUSTER_M = 40.0
 
 # ~5.2km bbox
@@ -78,14 +76,6 @@ def haversine_m(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float
     dl = math.radians(b_lng - a_lng)
     h = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(h))
-
-
-def bearing_deg(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float:
-    p1, p2 = math.radians(a_lat), math.radians(b_lat)
-    dl = math.radians(b_lng - a_lng)
-    y = math.sin(dl) * math.cos(p2)
-    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
-    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
 
 
 def expected_wait(cycle: float, green: float | None = None) -> float:
@@ -434,8 +424,8 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
 
     edge_map: dict[tuple[int, int], dict] = {}
     ped_edge_count = 0
-    # 信号横断の中心・向き・長さ（並行エッジへの信号付与用）
-    crossing_hubs: list[tuple[float, float, float, float, float]] = []
+    # 信号横断の中心（同一交差点の待ちまとめ用。待ち判定自体には使わない）
+    crossing_hubs: list[tuple[float, float, float]] = []
     for way in ways:
         tags = way.get("tags", {})
         if not way_walkable(tags):
@@ -452,20 +442,13 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
             mid_lat = (na["lat"] + nb["lat"]) / 2
             mid_lng = (na["lng"] + nb["lng"]) / 2
             segs.append((ia, ib, length, mid_lat, mid_lng))
-        # 1横断 = 1待ち。複数セグメントでも中央の1本だけ信号扱い
-        signal_idx = len(segs) // 2 if ped_crossing and segs else -1
         if ped_crossing and segs:
-            a0 = nodes_raw[nds[0]]
-            a1 = nodes_raw[nds[-1]]
-            total_len = sum(s[2] for s in segs)
-            br = bearing_deg(a0["lat"], a0["lng"], a1["lat"], a1["lng"])
             mid_lat = sum(s[3] for s in segs) / len(segs)
             mid_lng = sum(s[4] for s in segs) / len(segs)
-            crossing_hubs.append(
-                (mid_lat, mid_lng, br, total_len, cycle_near(mid_lat, mid_lng))
-            )
-        for i, (ia, ib, length, mid_lat, mid_lng) in enumerate(segs):
-            is_sig = i == signal_idx
+            crossing_hubs.append((mid_lat, mid_lng, cycle_near(mid_lat, mid_lng)))
+        # 横断ウェイの全セグメントを信号扱い（歩道の並行辺には付けない）
+        for ia, ib, length, mid_lat, mid_lng in segs:
+            is_sig = ped_crossing
             cycle = cycle_near(mid_lat, mid_lng) if is_sig else 0.0
             walk = round(length / WALK_SPEED, 2)
             for u, v in ((ia, ib), (ib, ia)):
@@ -478,9 +461,6 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
                         "walkSec": walk,
                         "cycleSec": round(cycle, 1),
                         "isSignal": is_sig,
-                        "lengthM": length,
-                        "midLat": mid_lat,
-                        "midLng": mid_lng,
                     }
                     if is_sig:
                         ped_edge_count += 1
@@ -489,69 +469,13 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
                     prev["cycleSec"] = round(cycle, 1)
                     ped_edge_count += 1
 
-    # 経路が横断中央を避けて通る並行エッジにも信号を付与
-    hub_cell = 0.00015
-    hub_grid: dict[tuple[int, int], list[tuple[float, float, float, float, float]]] = (
-        defaultdict(list)
-    )
-    for hub in crossing_hubs:
-        hub_grid[(int(hub[0] / hub_cell), int(hub[1] / hub_cell))].append(hub)
-
-    promote_count = 0
-    seen_undirected: set[tuple[int, int]] = set()
-    for (u, v), e in list(edge_map.items()):
-        if e["isSignal"]:
-            continue
-        key = (u, v) if u < v else (v, u)
-        if key in seen_undirected:
-            continue
-        seen_undirected.add(key)
-        length = e["lengthM"]
-        if length < 2.0 or length > 50.0:
-            continue
-        mid_lat, mid_lng = e["midLat"], e["midLng"]
-        i, j = int(mid_lat / hub_cell), int(mid_lng / hub_cell)
-        best_cycle = None
-        for di in (-1, 0, 1):
-            for dj in (-1, 0, 1):
-                for hlat, hlng, _hbr, hlen, hcyc in hub_grid.get((i + di, j + dj), []):
-                    if haversine_m(mid_lat, mid_lng, hlat, hlng) > PROMOTE_SIGNAL_M:
-                        continue
-                    # 横断と同程度の長さの辺だけ（交差点内の短い歩道片を拾う）
-                    if hlen > 0 and not (0.25 * hlen <= length <= 3.0 * hlen):
-                        continue
-                    best_cycle = hcyc
-                    break
-                if best_cycle is not None:
-                    break
-            if best_cycle is not None:
-                break
-        if best_cycle is None:
-            continue
-        for a, b in ((u, v), (v, u)):
-            ed = edge_map.get((a, b))
-            if ed is None or ed["isSignal"]:
-                continue
-            ed["isSignal"] = True
-            ed["cycleSec"] = round(best_cycle, 1)
-            ped_edge_count += 1
-            promote_count += 1
     print(
         f"  edges={len(edge_map)} pedCrossingEdges={ped_edge_count} "
-        f"promoted={promote_count} hubs={len(crossing_hubs)}",
+        f"hubs={len(crossing_hubs)}",
         flush=True,
     )
 
-    edges_out = [
-        {
-            "from": e["from"],
-            "to": e["to"],
-            "walkSec": e["walkSec"],
-            "cycleSec": e["cycleSec"],
-            "isSignal": e["isSignal"],
-        }
-        for e in edge_map.values()
-    ]
+    edges_out = list(edge_map.values())
 
     used = {e["from"] for e in edges_out} | {e["to"] for e in edges_out}
     remap: dict[int, int] = {}
@@ -575,7 +499,7 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
             signals_out.append([round(n["lat"], 6), round(n["lng"], 6)])
 
     hubs_out = [
-        [round(h[0], 6), round(h[1], 6), round(h[4], 1)] for h in crossing_hubs
+        [round(h[0], 6), round(h[1], 6), round(h[2], 1)] for h in crossing_hubs
     ]
 
     nodes_compact = [
@@ -602,7 +526,7 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
         "defaultWaitSec": round(default_wait, 2),
         "jarticCycleCount": len(cycles),
         "signalClusterM": SIGNAL_CLUSTER_M,
-        "promoteSignalM": PROMOTE_SIGNAL_M,
+        "promoteSignalM": 0,
         "nodes": nodes_compact,
         "edges": edges_compact,
         "signals": signals_out,
