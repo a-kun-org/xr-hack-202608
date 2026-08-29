@@ -38,6 +38,8 @@ NEAR_SIGNAL_M = 18.0
 NEAR_VEHICLE_SIGNAL_M = 30.0
 # 同一交差点で連続待ちしないための統合距離
 SIGNAL_CLUSTER_M = 40.0
+# OSM の交差点角で歩道ノードが数十cm切れていると直進横断できない
+STITCH_NEARBY_M = 1.5
 
 # ~5.2km bbox
 BBOX = (43.022, 141.288, 43.115, 141.414)  # south, west, north, east
@@ -76,6 +78,84 @@ def haversine_m(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float
     dl = math.radians(b_lng - a_lng)
     h = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(h))
+
+
+def stitch_nearby_nodes(
+    nodes: list[dict],
+    edges: list[dict],
+    walk_speed: float,
+    max_m: float = STITCH_NEARBY_M,
+) -> int:
+    """Connect sidewalk nodes that almost touch (typical OSM intersection gaps)."""
+    existing = {(e["from"], e["to"]) for e in edges}
+    by_id = {n["id"]: n for n in nodes}
+    cell = 0.00002
+    grid: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for n in nodes:
+        grid[(int(n["lat"] / cell), int(n["lng"] / cell))].append(n["id"])
+
+    added = 0
+    for n in nodes:
+        ci, cj = int(n["lat"] / cell), int(n["lng"] / cell)
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                for oid in grid.get((ci + di, cj + dj), []):
+                    if oid <= n["id"]:
+                        continue
+                    if (n["id"], oid) in existing or (oid, n["id"]) in existing:
+                        continue
+                    other = by_id[oid]
+                    length = haversine_m(n["lat"], n["lng"], other["lat"], other["lng"])
+                    if length < 0.15 or length > max_m:
+                        continue
+                    walk = round(length / walk_speed, 2)
+                    for u, v in ((n["id"], oid), (oid, n["id"])):
+                        edges.append(
+                            {
+                                "from": u,
+                                "to": v,
+                                "walkSec": walk,
+                                "cycleSec": 0.0,
+                                "isSignal": False,
+                                "crossingId": 0,
+                            }
+                        )
+                        existing.add((u, v))
+                    added += 1
+    return added
+
+
+def stitch_compact_graph(graph: dict) -> int:
+    """Add stitch edges to a compact graph.json object. Returns pair count."""
+    nodes = [{"id": n[0], "lat": n[1], "lng": n[2]} for n in graph["nodes"]]
+    edges = []
+    for e in graph["edges"]:
+        cid = e[5] if len(e) >= 6 else 0
+        edges.append(
+            {
+                "from": e[0],
+                "to": e[1],
+                "walkSec": e[2],
+                "cycleSec": e[3],
+                "isSignal": e[4] == 1 or cid > 0,
+                "crossingId": cid,
+            }
+        )
+    added = stitch_nearby_nodes(
+        nodes, edges, float(graph.get("walkSpeedMps", WALK_SPEED)), STITCH_NEARBY_M
+    )
+    graph["edges"] = [
+        [
+            e["from"],
+            e["to"],
+            e["walkSec"],
+            e["cycleSec"],
+            1 if e["isSignal"] else 0,
+            int(e.get("crossingId", 0)),
+        ]
+        for e in edges
+    ]
+    return added
 
 
 def expected_wait(cycle: float, green: float | None = None) -> float:
@@ -497,6 +577,8 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
         e["to"] = remap[e["to"]]
     print(f"  pruned nodes {len(nodes_out)} -> {len(nodes_kept)}", flush=True)
     nodes_out = nodes_kept
+    stitched = stitch_nearby_nodes(nodes_out, edges_out, WALK_SPEED, STITCH_NEARBY_M)
+    print(f"  stitched nearby sidewalks={stitched}", flush=True)
 
     signals_out = []
     for osm_id in ped_signal_ids:
