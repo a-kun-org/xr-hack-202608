@@ -39,6 +39,12 @@ const modeInspectBtn = document.getElementById("mode-inspect") as HTMLButtonElem
 const statusEl = document.getElementById("status")!;
 const searchBtn = document.getElementById("search-btn") as HTMLButtonElement;
 const resultEl = document.getElementById("result")!;
+const sheetEl = document.getElementById("sheet")!;
+const sheetHandle = document.getElementById("sheet-handle")!;
+
+const WIDE_MQ = "(min-width: 721px)";
+const SHEET_H_KEY = "sheet-h";
+const SHEET_MIN = 72;
 
 const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
 const softwareWebGL = isSoftwareWebGL();
@@ -54,6 +60,107 @@ function isSoftwareWebGL(): boolean {
   if (!ext) return false;
   const renderer = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL));
   return /swiftshader|llvmpipe|softpipe|software/i.test(renderer);
+}
+
+function isWide(): boolean {
+  return window.matchMedia(WIDE_MQ).matches;
+}
+
+function sheetMax(): number {
+  return Math.max(SHEET_MIN, window.innerHeight - 8);
+}
+
+function applySheetHeight(px: number) {
+  const h = Math.round(Math.min(sheetMax(), Math.max(SHEET_MIN, px)));
+  sheetEl.style.setProperty("--sheet-h", `${h}px`);
+  const max = sheetMax();
+  const now = Math.round(((h - SHEET_MIN) / Math.max(1, max - SHEET_MIN)) * 100);
+  sheetHandle.setAttribute("aria-valuemin", "0");
+  sheetHandle.setAttribute("aria-valuemax", "100");
+  sheetHandle.setAttribute("aria-valuenow", String(now));
+  return h;
+}
+
+function sheetPad(): number {
+  return Math.round(sheetEl.getBoundingClientRect().height) + 16;
+}
+
+function syncSheetHandle() {
+  if (isWide()) {
+    sheetHandle.removeAttribute("tabindex");
+    sheetHandle.setAttribute("aria-hidden", "true");
+    return;
+  }
+  sheetHandle.tabIndex = 0;
+  sheetHandle.removeAttribute("aria-hidden");
+}
+
+function initSheetResize() {
+  const stored = Number(localStorage.getItem(SHEET_H_KEY));
+  if (Number.isFinite(stored) && stored > 0) applySheetHeight(stored);
+  else applySheetHeight(sheetEl.getBoundingClientRect().height || window.innerHeight * 0.52);
+  syncSheetHandle();
+
+  let dragging = false;
+  let startY = 0;
+  let startH = 0;
+
+  const endDrag = (e: PointerEvent) => {
+    if (!dragging) return;
+    dragging = false;
+    sheetEl.classList.remove("is-resizing");
+    try {
+      sheetHandle.releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    localStorage.setItem(SHEET_H_KEY, String(applySheetHeight(sheetPad() - 16)));
+  };
+
+  sheetHandle.addEventListener("pointerdown", (e) => {
+    if (isWide() || e.button !== 0) return;
+    e.preventDefault();
+    dragging = true;
+    startY = e.clientY;
+    startH = sheetEl.getBoundingClientRect().height;
+    sheetEl.classList.add("is-resizing");
+    sheetHandle.setPointerCapture(e.pointerId);
+  });
+  sheetHandle.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    applySheetHeight(startH + (startY - e.clientY));
+  });
+  sheetHandle.addEventListener("pointerup", endDrag);
+  sheetHandle.addEventListener("pointercancel", endDrag);
+  sheetHandle.addEventListener("keydown", (e) => {
+    if (isWide()) return;
+    const step = e.shiftKey ? 80 : 32;
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      localStorage.setItem(
+        SHEET_H_KEY,
+        String(applySheetHeight(sheetEl.getBoundingClientRect().height + step))
+      );
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      localStorage.setItem(
+        SHEET_H_KEY,
+        String(applySheetHeight(sheetEl.getBoundingClientRect().height - step))
+      );
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      localStorage.setItem(SHEET_H_KEY, String(applySheetHeight(sheetMax())));
+    } else if (e.key === "End") {
+      e.preventDefault();
+      localStorage.setItem(SHEET_H_KEY, String(applySheetHeight(SHEET_MIN)));
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    syncSheetHandle();
+    if (isWide()) return;
+    applySheetHeight(sheetEl.getBoundingClientRect().height);
+  });
 }
 
 function rasterStyle(dark: boolean) {
@@ -364,11 +471,11 @@ function showResult(result: RouteResult, fitted: boolean) {
     if (fitted) {
       const bounds = new LngLatBounds();
       for (const p of result.path) bounds.extend(lngLat(p));
-      const wide = window.innerWidth > 720;
+      const wide = isWide();
       currentMap.fitBounds(bounds, {
         padding: wide
           ? { top: 24, left: 420, bottom: 24, right: 24 }
-          : { top: 24, left: 24, bottom: 280, right: 24 },
+          : { top: 24, left: 24, bottom: sheetPad(), right: 24 },
         duration: 600,
       });
     }
@@ -702,6 +809,8 @@ function initMap() {
   map = current;
   for (const fn of pendingMapReady.splice(0)) onMapReady(fn);
 }
+
+initSheetResize();
 
 if (!TOKEN) {
   showMapError(TOKEN_ERROR);
