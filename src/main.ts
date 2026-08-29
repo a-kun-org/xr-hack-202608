@@ -1,5 +1,12 @@
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import {
+  GeoJSONSource,
+  LngLatBounds,
+  Map as MapboxMap,
+  Marker,
+  NavigationControl,
+  Popup,
+} from "mapbox-gl/esm";
+import "mapbox-gl/dist/mapbox-gl.css";
 import "./style.css";
 import {
   distanceFromOriginM,
@@ -16,6 +23,9 @@ import {
 
 const SAPPORO_STATION: LatLng = { lat: 43.0687, lng: 141.3508 };
 const REFRESH_MS = 12000;
+const TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? "";
+const TOKEN_ERROR =
+  "Mapbox のアクセストークンが未設定です。VITE_MAPBOX_ACCESS_TOKEN を設定してください。";
 
 const mapEl = document.getElementById("map")!;
 const destLabel = document.getElementById("dest-label")!;
@@ -27,52 +37,145 @@ const searchBtn = document.getElementById("search-btn") as HTMLButtonElement;
 const resultEl = document.getElementById("result")!;
 const clockEl = document.getElementById("clock")!;
 
-const map = L.map(mapEl, { zoomControl: true }).setView(
-  [SAPPORO_STATION.lat, SAPPORO_STATION.lng],
-  14
-);
-map.zoomControl.setPosition("topright");
+const darkMq = window.matchMedia("(prefers-color-scheme: dark)");
+const softwareWebGL = isSoftwareWebGL();
 
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution:
-    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  maxZoom: 19,
-}).addTo(map);
+let map: MapboxMap | null = null;
+let originMarker: Marker | null = null;
 
-const originIcon = L.divIcon({
-  className: "",
-  html: `<div style="width:22px;height:22px;border-radius:50%;background:#34C759;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.25)"></div>`,
-  iconSize: [22, 22],
-  iconAnchor: [11, 11],
-});
+function isSoftwareWebGL(): boolean {
+  const canvas = document.createElement("canvas");
+  const gl = canvas.getContext("webgl");
+  if (!gl) return true;
+  const ext = gl.getExtension("WEBGL_debug_renderer_info");
+  if (!ext) return false;
+  const renderer = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL));
+  return /swiftshader|llvmpipe|softpipe|software/i.test(renderer);
+}
 
-const destIcon = L.divIcon({
-  className: "",
-  html: `<div style="width:22px;height:22px;border-radius:50%;background:#FF3B30;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.25)"></div>`,
-  iconSize: [22, 22],
-  iconAnchor: [11, 11],
-});
+function rasterStyle(dark: boolean) {
+  const id = dark ? "dark-v11" : "streets-v12";
+  return {
+    version: 8 as const,
+    sources: {
+      basemap: {
+        type: "raster" as const,
+        tiles: [
+          `https://api.mapbox.com/styles/v1/mapbox/${id}/tiles/{z}/{x}/{y}?access_token=${TOKEN}`,
+        ],
+        tileSize: 512,
+        attribution: "© Mapbox © OpenStreetMap",
+      },
+    },
+    layers: [{ id: "basemap", type: "raster" as const, source: "basemap" }],
+  };
+}
 
-const walkerIcon = L.divIcon({
-  className: "",
-  html: `<div style="width:18px;height:18px;border-radius:50%;background:#007AFF;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,122,255,.35)"></div>`,
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-});
+function lngLat(p: LatLng): [number, number] {
+  return [p.lng, p.lat];
+}
 
-let originMarker = L.marker([SAPPORO_STATION.lat, SAPPORO_STATION.lng], {
-  icon: originIcon,
-  title: "起点",
-}).addTo(map);
+function makeDot(color: string, size: number, border = "3px solid #fff"): HTMLElement {
+  const el = document.createElement("div");
+  el.style.width = `${size}px`;
+  el.style.height = `${size}px`;
+  el.style.borderRadius = "50%";
+  el.style.background = color;
+  el.style.border = border;
+  el.style.boxShadow = "0 2px 8px rgba(0,0,0,.25)";
+  return el;
+}
+
+function emptyCollection() {
+  return { type: "FeatureCollection" as const, features: [] };
+}
+
+function circlePolygon(center: LatLng, radiusM: number, steps = 64) {
+  const coords: [number, number][] = [];
+  const latRad = (center.lat * Math.PI) / 180;
+  const mLat = 111320;
+  const mLng = 111320 * Math.cos(latRad);
+  for (let i = 0; i <= steps; i++) {
+    const a = (2 * Math.PI * i) / steps;
+    coords.push([
+      center.lng + (Math.cos(a) * radiusM) / mLng,
+      center.lat + (Math.sin(a) * radiusM) / mLat,
+    ]);
+  }
+  return { type: "Polygon" as const, coordinates: [coords] };
+}
+
+function showMapError(message: string) {
+  const el = document.createElement("div");
+  el.className = "map-error";
+  el.setAttribute("role", "alert");
+  el.textContent = message;
+  mapEl.insertAdjacentElement("afterend", el);
+}
+
+function onMapReady(fn: () => void) {
+  if (!map) return;
+  if (map.isStyleLoaded()) fn();
+  else map.once("load", fn);
+}
+
+function ensureOverlays() {
+  if (!map) return;
+  if (!map.getSource("range")) {
+    map.addSource("range", { type: "geojson", data: emptyCollection() });
+    map.addLayer({
+      id: "range-fill",
+      type: "fill",
+      source: "range",
+      paint: { "fill-color": "#007AFF", "fill-opacity": 0.04 },
+    });
+    map.addLayer({
+      id: "range-outline",
+      type: "line",
+      source: "range",
+      paint: { "line-color": "#007AFF", "line-width": 1 },
+    });
+  }
+  if (!map.getSource("route")) {
+    map.addSource("route", { type: "geojson", data: emptyCollection() });
+    map.addLayer({
+      id: "route-line",
+      type: "line",
+      source: "route",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#007AFF",
+        "line-width": 5,
+        "line-opacity": 0.92,
+      },
+    });
+  }
+}
+
+function setRouteLine(path: LatLng[] | null) {
+  if (!map) return;
+  ensureOverlays();
+  const src = map.getSource("route") as GeoJSONSource;
+  if (!path || path.length < 2) {
+    src.setData(emptyCollection());
+    return;
+  }
+  src.setData({
+    type: "Feature",
+    properties: {},
+    geometry: { type: "LineString", coordinates: path.map(lngLat) },
+  });
+}
+
+type SignalPin = { marker: Marker; popup: Popup; el: HTMLElement };
 
 let graph: GraphData | null = null;
 let origin: LatLng = { ...SAPPORO_STATION };
 let dest: LatLng | null = null;
-let destMarker: L.Marker | null = null;
+let destMarker: Marker | null = null;
 let tapMode: "origin" | "dest" = "dest";
-let routeLine: L.Polyline | null = null;
-let walkerMarker: L.Marker | null = null;
-let routeSignals: L.CircleMarker[] = [];
+let walkerMarker: Marker | null = null;
+let routeSignals: SignalPin[] = [];
 let lastResult: RouteResult | null = null;
 let refreshTimer: number | null = null;
 
@@ -94,20 +197,18 @@ function tickClock() {
 function updateLiveSignals() {
   if (!lastResult) return;
   lastResult.signalStops.forEach((stop, i) => {
-    const marker = routeSignals[i];
-    if (!marker) return;
-    // 通過時の色: 到着が赤なら赤待ち、青なら青通過（現況の点滅ではない）
+    const pin = routeSignals[i];
+    if (!pin) return;
     const passGreen = stop.waitSec <= 0.5;
-    marker.setStyle({
-      color: passGreen ? "#34C759" : "#FF3B30",
-      fillColor: passGreen ? "#34C759" : "#FF3B30",
-    });
+    const color = passGreen ? "#34C759" : "#FF3B30";
+    pin.el.style.background = color;
+    pin.el.style.borderColor = color;
     const arrive = formatClock(new Date(stop.arriveAt * 1000));
     const cross = formatClock(new Date(stop.crossAt * 1000));
     const plan = passGreen
       ? `${arrive}到着・青のためそのまま横断`
       : `${arrive}到着 → ${formatDuration(stop.waitSec)}待ち → ${cross}に横断`;
-    marker.setTooltipContent(
+    pin.popup.setHTML(
       `#${stop.index} ${passGreen ? "青通過" : "赤待ち"}<br>${plan}`
     );
   });
@@ -122,66 +223,73 @@ function updateWalker() {
     elapsed,
     lastResult.nodeWait
   );
-  walkerMarker.setLatLng([p.lat, p.lng]);
+  walkerMarker.setLngLat(lngLat(p));
 }
 
 function clearRoute() {
-  if (routeLine) {
-    map.removeLayer(routeLine);
-    routeLine = null;
-  }
-  if (walkerMarker) {
-    map.removeLayer(walkerMarker);
-    walkerMarker = null;
-  }
-  for (const m of routeSignals) map.removeLayer(m);
+  onMapReady(() => setRouteLine(null));
+  walkerMarker?.remove();
+  walkerMarker = null;
+  for (const pin of routeSignals) pin.marker.remove();
   routeSignals = [];
   lastResult = null;
 }
 
 function showResult(result: RouteResult, fitted: boolean) {
+  if (!map) return;
+  const currentMap = map;
   lastResult = result;
-  if (routeLine) map.removeLayer(routeLine);
-  routeLine = L.polyline(
-    result.path.map((p) => [p.lat, p.lng] as [number, number]),
-    { color: "#007AFF", weight: 5, opacity: 0.92 }
-  ).addTo(map);
-  if (fitted) {
-    const wide = window.innerWidth > 720;
-    map.fitBounds(routeLine.getBounds(), {
-      paddingTopLeft: wide ? [420, 24] : [24, 24],
-      paddingBottomRight: wide ? [24, 24] : [24, 280],
-    });
-  }
+  onMapReady(() => {
+    setRouteLine(result.path);
+    if (fitted) {
+      const bounds = new LngLatBounds();
+      for (const p of result.path) bounds.extend(lngLat(p));
+      const wide = window.innerWidth > 720;
+      currentMap.fitBounds(bounds, {
+        padding: wide
+          ? { top: 24, left: 420, bottom: 24, right: 24 }
+          : { top: 24, left: 24, bottom: 280, right: 24 },
+        duration: 600,
+      });
+    }
+  });
 
-  for (const m of routeSignals) map.removeLayer(m);
+  for (const pin of routeSignals) pin.marker.remove();
   routeSignals = result.signalStops.map((stop) => {
     const passGreen = stop.waitSec <= 0.5;
-    const marker = L.circleMarker([stop.lat, stop.lng], {
-      radius: 7,
-      color: passGreen ? "#34C759" : "#FF3B30",
-      weight: 2,
-      fillColor: passGreen ? "#34C759" : "#FF3B30",
-      fillOpacity: 0.9,
-    }).addTo(map);
-    marker.bindTooltip("", { permanent: false, direction: "top", opacity: 0.95 });
-    return marker;
+    const color = passGreen ? "#34C759" : "#FF3B30";
+    const el = makeDot(color, 14, `2px solid ${color}`);
+    el.style.cursor = "pointer";
+    const popup = new Popup({
+      closeButton: false,
+      offset: 12,
+      className: "signal-popup",
+    });
+    const marker = new Marker({ element: el, anchor: "center" })
+      .setLngLat(lngLat(stop))
+      .setPopup(popup)
+      .addTo(currentMap);
+    return { marker, popup, el };
   });
   updateLiveSignals();
 
   if (!walkerMarker) {
-    walkerMarker = L.marker(result.path[0], { icon: walkerIcon, zIndexOffset: 800 }).addTo(map);
+    const el = makeDot("#007AFF", 18);
+    el.style.boxShadow = "0 2px 8px rgba(0,122,255,.35)";
+    walkerMarker = new Marker({ element: el, anchor: "center" })
+      .setLngLat(lngLat(result.path[0]))
+      .addTo(currentMap);
   }
   updateWalker();
 
   const depart = new Date(result.departAt * 1000);
   const arrive = new Date((result.departAt + result.totalSec) * 1000);
-  (document.getElementById("r-depart")!).textContent = formatClock(depart);
-  (document.getElementById("r-arrive")!).textContent = formatClock(arrive);
-  (document.getElementById("r-total")!).textContent = formatDuration(result.totalSec);
-  (document.getElementById("r-walk")!).textContent = formatDuration(result.walkSec);
-  (document.getElementById("r-wait")!).textContent = formatDuration(result.waitSec);
-  (document.getElementById("r-signals")!).textContent = String(result.signalCount);
+  document.getElementById("r-depart")!.textContent = formatClock(depart);
+  document.getElementById("r-arrive")!.textContent = formatClock(arrive);
+  document.getElementById("r-total")!.textContent = formatDuration(result.totalSec);
+  document.getElementById("r-walk")!.textContent = formatDuration(result.walkSec);
+  document.getElementById("r-wait")!.textContent = formatDuration(result.waitSec);
+  document.getElementById("r-signals")!.textContent = String(result.signalCount);
 
   const timeline = document.getElementById("signal-timeline")!;
   timeline.replaceChildren();
@@ -224,6 +332,10 @@ function setTapMode(mode: "origin" | "dest", announce = true) {
   modeOriginBtn.classList.toggle("active", mode === "origin");
   modeDestBtn.classList.toggle("active", mode === "dest");
   if (!announce) return;
+  if (!TOKEN) {
+    setStatus(TOKEN_ERROR, true);
+    return;
+  }
   setStatus(
     mode === "origin"
       ? "地図をタップして起点を指定してください"
@@ -268,26 +380,19 @@ function scheduleRefresh() {
 }
 
 async function loadGraph(): Promise<void> {
-  setStatus("歩行ネットワークを読み込み中…");
+  if (TOKEN) setStatus("歩行ネットワークを読み込み中…");
   const res = await fetch(`${import.meta.env.BASE_URL}data/graph.json`);
   if (!res.ok) throw new Error(`graph.json の取得に失敗 (${res.status})`);
   graph = normalizeGraph(await res.json());
 
-  L.circle([graph.origin.lat, graph.origin.lng], {
-    radius: graph.maxRadiusM,
-    color: "#007AFF",
-    weight: 1,
-    fillColor: "#007AFF",
-    fillOpacity: 0.04,
-    interactive: false,
-  }).addTo(map);
+  onMapReady(paintRange);
 
-  setStatus("地図をタップして終点を指定してください");
+  if (TOKEN) setStatus("地図をタップして終点を指定してください");
 }
 
-map.on("click", (e) => {
-  if (!graph) return;
-  const p: LatLng = { lat: e.latlng.lat, lng: e.latlng.lng };
+function onMapClick(e: { lngLat: { lat: number; lng: number } }) {
+  if (!graph || !map) return;
+  const p: LatLng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
   const d = distanceFromOriginM(p, graph.origin);
   if (d > graph.maxRadiusM) {
     setStatus(
@@ -300,7 +405,7 @@ map.on("click", (e) => {
   if (tapMode === "origin") {
     origin = p;
     originLabel.textContent = fmtCoord(p);
-    originMarker.setLatLng([p.lat, p.lng]);
+    originMarker?.setLngLat(lngLat(p));
     resultEl.hidden = true;
     clearRoute();
     updateSearchEnabled();
@@ -311,14 +416,76 @@ map.on("click", (e) => {
 
   dest = p;
   destLabel.textContent = fmtCoord(p);
-  if (destMarker) destMarker.setLatLng([p.lat, p.lng]);
-  else destMarker = L.marker([p.lat, p.lng], { icon: destIcon }).addTo(map);
+  if (destMarker) destMarker.setLngLat(lngLat(p));
+  else {
+    destMarker = new Marker({
+      element: makeDot("#FF3B30", 22),
+      anchor: "center",
+    })
+      .setLngLat(lngLat(p))
+      .addTo(map);
+  }
 
   updateSearchEnabled();
   resultEl.hidden = true;
   clearRoute();
   setStatus("終点を設定しました。「いま出発で検索」を押してください");
-});
+}
+
+function paintRange() {
+  if (!map || !graph) return;
+  ensureOverlays();
+  (map.getSource("range") as GeoJSONSource).setData({
+    type: "Feature",
+    properties: {},
+    geometry: circlePolygon(graph.origin, graph.maxRadiusM),
+  });
+}
+
+function initMap() {
+  const current = new MapboxMap({
+    container: mapEl,
+    accessToken: TOKEN,
+    style: softwareWebGL ? rasterStyle(darkMq.matches) : "mapbox://styles/mapbox/standard",
+    center: [SAPPORO_STATION.lng, SAPPORO_STATION.lat],
+    zoom: 14,
+    maxPitch: 0,
+    dragRotate: false,
+    language: softwareWebGL ? undefined : "ja",
+    config: softwareWebGL
+      ? undefined
+      : { basemap: { lightPreset: darkMq.matches ? "night" : "day" } },
+    locale: {
+      "NavigationControl.ZoomIn": "拡大",
+      "NavigationControl.ZoomOut": "縮小",
+    },
+  });
+  current.addControl(new NavigationControl({ showCompass: false }), "top-right");
+  darkMq.addEventListener("change", () => {
+    if (softwareWebGL) current.setStyle(rasterStyle(darkMq.matches));
+    else current.setConfigProperty("basemap", "lightPreset", darkMq.matches ? "night" : "day");
+  });
+  originMarker = new Marker({
+    element: makeDot("#34C759", 22),
+    anchor: "center",
+  })
+    .setLngLat(lngLat(SAPPORO_STATION))
+    .addTo(current);
+  current.on("style.load", () => {
+    ensureOverlays();
+    paintRange();
+    if (lastResult) setRouteLine(lastResult.path);
+  });
+  current.on("click", onMapClick);
+  map = current;
+}
+
+if (!TOKEN) {
+  showMapError(TOKEN_ERROR);
+  setStatus(TOKEN_ERROR, true);
+} else {
+  initMap();
+}
 
 modeOriginBtn.addEventListener("click", () => setTapMode("origin"));
 modeDestBtn.addEventListener("click", () => setTapMode("dest"));

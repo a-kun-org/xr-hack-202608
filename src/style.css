@@ -61,20 +61,40 @@ body {
   background: var(--grouped);
 }
 
-.leaflet-control-zoom {
+.map-error {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px 24px 24px min(420px, 42%);
+  background: var(--grouped);
+  color: var(--secondary-label);
+  font-size: 15px;
+  line-height: 1.45;
+  text-align: center;
+  pointer-events: none;
+}
+
+.mapboxgl-ctrl-group {
   border: none !important;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
   border-radius: 12px !important;
   overflow: hidden;
 }
 
-.leaflet-bar a {
+.mapboxgl-ctrl-group button {
   width: 44px !important;
   height: 44px !important;
-  line-height: 44px !important;
-  color: var(--system-blue) !important;
-  background: var(--sheet-solid) !important;
-  border-bottom-color: var(--separator) !important;
+}
+
+.mapboxgl-popup-content {
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 10px;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
 }
 
 .sheet {
@@ -349,6 +369,10 @@ h1 {
     max-height: 52vh;
     border-radius: 16px 16px 0 0;
     padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .map-error {
+    padding: 24px 24px 55vh;
   }
 
   h1 {

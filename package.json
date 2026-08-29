@@ -15,12 +15,11 @@
     "url": "git+https://github.com/a-kun-org/xr-hack-202608.git"
   },
   "license": "ISC",
-  "dependencies": {
-    "leaflet": "^1.9.4"
-  },
   "devDependencies": {
-    "@types/leaflet": "^1.9.21",
     "typescript": "^5.9.2",
     "vite": "^7.1.3"
+  },
+  "dependencies": {
+    "mapbox-gl": "^3.29.0"
   }
 }
