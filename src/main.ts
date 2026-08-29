@@ -116,10 +116,19 @@ function showMapError(message: string) {
   mapEl.insertAdjacentElement("afterend", el);
 }
 
+const pendingMapReady: Array<() => void> = [];
+
 function onMapReady(fn: () => void) {
-  if (!map) return;
-  if (map.isStyleLoaded()) fn();
-  else map.once("load", fn);
+  if (!map) {
+    pendingMapReady.push(fn);
+    return;
+  }
+  if (map.isStyleLoaded()) {
+    fn();
+    return;
+  }
+  map.once("load", fn);
+  map.once("style.load", fn);
 }
 
 function ensureOverlays() {
@@ -511,11 +520,15 @@ function placeDest(p: LatLng) {
   updateSearchEnabled();
 }
 
+let queryRouteApplied = false;
+
 function applyQueryRoute() {
+  if (queryRouteApplied || !graph || !map) return;
   const q = new URLSearchParams(location.search);
   const o = parseLatLngParam(q.get("origin"));
   const d = parseLatLngParam(q.get("dest"));
   if (!o && !d) return;
+  queryRouteApplied = true;
   if (o) placeOrigin(o);
   if (d) placeDest(d);
   if (o && d) {
@@ -683,9 +696,11 @@ function initMap() {
     ensureOverlays();
     paintRange();
     if (lastResult) setRouteLine(lastResult.path);
+    applyQueryRoute();
   });
   current.on("click", onMapClick);
   map = current;
+  for (const fn of pendingMapReady.splice(0)) onMapReady(fn);
 }
 
 if (!TOKEN) {
