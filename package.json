@@ -1,0 +1,25 @@
+{
+  "name": "xr-hack-202608",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "build:graph": "python3 scripts/build_graph.py"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/a-kun-org/xr-hack-202608.git"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "leaflet": "^1.9.4"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.21",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3"
+  }
+}

@@ -1,0 +1,98 @@
+[
+  {
+    "name": "札幌駅前交差点付近",
+    "intersectionId": "1",
+    "lat": 43.0675,
+    "lng": 141.3506,
+    "cycle": 145,
+    "green": 40
+  },
+  {
+    "name": "北5西3付近",
+    "intersectionId": "2",
+    "lat": 43.0689,
+    "lng": 141.3472,
+    "cycle": 125,
+    "green": 35
+  },
+  {
+    "name": "大通西1付近",
+    "intersectionId": "10",
+    "lat": 43.0605,
+    "lng": 141.3535,
+    "cycle": 125,
+    "green": 38
+  },
+  {
+    "name": "時計台前付近",
+    "intersectionId": "11",
+    "lat": 43.0628,
+    "lng": 141.3535,
+    "cycle": 120,
+    "green": 35
+  },
+  {
+    "name": "創成川通・北3付近",
+    "intersectionId": "12",
+    "lat": 43.0655,
+    "lng": 141.3568,
+    "cycle": 125,
+    "green": 36
+  },
+  {
+    "name": "北8西4付近",
+    "intersectionId": "20",
+    "lat": 43.0732,
+    "lng": 141.3455,
+    "cycle": 115,
+    "green": 32
+  },
+  {
+    "name": "南1西3付近",
+    "intersectionId": "30",
+    "lat": 43.0588,
+    "lng": 141.3478,
+    "cycle": 120,
+    "green": 34
+  },
+  {
+    "name": "北大前・北12西4付近",
+    "intersectionId": "40",
+    "lat": 43.0785,
+    "lng": 141.3448,
+    "cycle": 110,
+    "green": 30
+  },
+  {
+    "name": "すすきの交差点付近",
+    "intersectionId": "50",
+    "lat": 43.0556,
+    "lng": 141.3530,
+    "cycle": 130,
+    "green": 40
+  },
+  {
+    "name": "バスセンター前付近",
+    "intersectionId": "60",
+    "lat": 43.0648,
+    "lng": 141.3585,
+    "cycle": 120,
+    "green": 35
+  },
+  {
+    "name": "北4西4付近",
+    "intersectionId": "8",
+    "lat": 43.0668,
+    "lng": 141.3458,
+    "cycle": 105,
+    "green": 30
+  },
+  {
+    "name": "大通公園西4付近",
+    "intersectionId": "15",
+    "lat": 43.0598,
+    "lng": 141.3465,
+    "cycle": 125,
+    "green": 36
+  }
+]

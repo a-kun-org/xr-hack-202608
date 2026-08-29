@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.DS_Store
+*.local
+data/raw/*.csv
+data/raw/*.zip
+data/raw/typeC_*
+!data/raw/sapporo_cycles.json
+scripts/.cache/
