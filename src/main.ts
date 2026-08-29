@@ -711,6 +711,8 @@ function initMap() {
   map = current;
 }
 
+initSheetResize();
+
 if (!TOKEN) {
   showMapError(TOKEN_ERROR);
   setStatus(TOKEN_ERROR, true);
@@ -729,8 +731,6 @@ searchBtn.addEventListener("click", () => {
   searchRoute(false);
   scheduleRefresh();
 });
-
-initSheetResize();
 
 void showAddress(originLabel, origin, ++originLookup, () => originLookup);
 tickLive();
