@@ -319,24 +319,55 @@ async function showAddress(
   }
 }
 
+function livePhaseText(stop: SignalStop): { green: boolean; text: string } {
+  const phase = phaseRemain(Date.now() / 1000, stop);
+  return {
+    green: phase.green,
+    text: phase.green
+      ? `いま青 · 残り約${phase.remain}秒`
+      : `いま赤 · 青まで約${phase.remain}秒`,
+  };
+}
+
+function applySignalLive(root: ParentNode, stop: SignalStop) {
+  const live = livePhaseText(stop);
+  const text = root.querySelector("[data-live]");
+  const dot = root.querySelector("[data-live-dot]");
+  if (text) text.textContent = live.text;
+  if (dot) {
+    dot.classList.toggle("go", live.green);
+    dot.classList.toggle("wait", !live.green);
+  }
+}
+
 function signalPopupHTML(stop: SignalStop): string {
   const passGreen = stop.waitSec <= 0.5;
   const arrive = formatClock(new Date(stop.arriveAt * 1000));
   const cross = formatClock(new Date(stop.crossAt * 1000));
   const clear = formatClock(new Date(stop.clearAt * 1000));
-  const plan = passGreen
-    ? `${arrive}到着・青のためそのまま横断`
-    : `${arrive}到着 → ${formatDuration(stop.waitSec)}待ち → ${cross}に横断`;
-  const phase = phaseRemain(Date.now() / 1000, stop);
-  const nowText = phase.green
-    ? `いま青（残り約${phase.remain}秒）`
-    : `いま赤（青まで約${phase.remain}秒）`;
+  const live = livePhaseText(stop);
+  const waitRow = passGreen
+    ? ""
+    : `<li><span>待ち</span><strong>${formatDuration(stop.waitSec)}</strong></li>`;
   return `
-    <div class="signal-popup-title">信号 ${stop.index} ${passGreen ? "青通過" : "赤待ち"}</div>
-    <div>${plan}</div>
-    <div>渡り終わり ${clear}</div>
-    <div class="signal-popup-meta">サイクル ${Math.round(stop.cycle)}秒 / 歩行者青 ${Math.round(stop.green)}秒</div>
-    <div class="signal-popup-meta">${nowText}</div>
+    <article class="signal-card">
+      <header class="signal-card-header">
+        <p class="signal-card-eyebrow">交差点</p>
+        <h3 class="signal-card-title">信号 ${stop.index}</h3>
+      </header>
+      <p class="signal-card-status ${passGreen ? "go" : "wait"}">${passGreen ? "青通過" : "赤待ち"}</p>
+      <ul class="signal-card-rows">
+        <li><span>到着</span><strong>${arrive}</strong></li>
+        ${waitRow}
+        <li><span>横断開始</span><strong>${cross}</strong></li>
+        <li><span>渡り終わり</span><strong>${clear}</strong></li>
+      </ul>
+      <p class="signal-card-live">
+        <span class="signal-card-dot ${live.green ? "go" : "wait"}" data-live-dot></span>
+        <span data-live>${live.text}</span>
+      </p>
+      <p class="signal-card-meta">サイクル ${Math.round(stop.cycle)}秒 · 歩行者青 ${Math.round(stop.green)}秒</p>
+    </article>
   `;
 }
 
@@ -375,6 +406,9 @@ function openSignalInfo(index: number) {
   }
   pin.popup.setLngLat(lngLat(stop)).setHTML(signalPopupHTML(stop));
   if (!pin.popup.isOpen()) pin.popup.addTo(map);
+  document.querySelectorAll("#signal-timeline > li").forEach((el, i) => {
+    el.classList.toggle("is-selected", i === index - 1);
+  });
 }
 
 function updateLiveSignals() {
@@ -386,7 +420,10 @@ function updateLiveSignals() {
     const color = passGreen ? "#34C759" : "#FF3B30";
     pin.el.style.background = color;
     pin.el.style.borderColor = color;
-    pin.popup.setHTML(signalPopupHTML(stop));
+    if (!pin.popup.isOpen()) return;
+    const card = pin.popup.getElement()?.querySelector(".signal-card");
+    if (card) applySignalLive(card, stop);
+    else pin.popup.setHTML(signalPopupHTML(stop));
   });
 }
 
@@ -450,10 +487,24 @@ function showResult(result: RouteResult, fitted: boolean) {
     const popup = new Popup({
       closeButton: true,
       closeOnClick: false,
-      offset: 16,
+      offset: 20,
+      maxWidth: "280px",
       className: "signal-popup",
     });
-    popup.on("close", () => wrap.classList.remove("is-open"));
+    popup.on("close", () => {
+      wrap.classList.remove("is-open");
+      if (!routeSignals.some((p) => p.popup.isOpen())) {
+        document
+          .querySelectorAll("#signal-timeline > li.is-selected")
+          .forEach((el) => el.classList.remove("is-selected"));
+      }
+    });
+    popup.on("open", () => {
+      const close = popup
+        .getElement()
+        ?.querySelector(".mapboxgl-popup-close-button");
+      if (close) close.setAttribute("aria-label", "閉じる");
+    });
     wrap.addEventListener("click", (ev) => {
       if (tapMode !== "inspect") return;
       ev.stopPropagation();
@@ -467,9 +518,6 @@ function showResult(result: RouteResult, fitted: boolean) {
   updateLiveSignals();
   updateInspectEnabled();
   if (fitted && result.signalStops.length > 0) setTapMode("inspect", false);
-  if (openIndex >= 0 && routeSignals[openIndex]) {
-    openSignalInfo(openIndex + 1);
-  }
 
   if (!walkerMarker) {
     const el = makeDot("#007AFF", 18);
@@ -504,7 +552,7 @@ function showResult(result: RouteResult, fitted: boolean) {
       li.setAttribute("role", "button");
       li.innerHTML = `
         <div class="timeline-head">
-          <span class="badge">信号 ${stop.index}</span>
+          <span>信号 ${stop.index}</span>
           <span class="state ${wait ? "wait" : "go"}">${wait ? "赤待ち" : "青通過"}</span>
         </div>
         <div class="timeline-body">
@@ -532,6 +580,9 @@ function showResult(result: RouteResult, fitted: boolean) {
     }
   }
   resultEl.hidden = false;
+  if (openIndex >= 0 && routeSignals[openIndex]) {
+    openSignalInfo(openIndex + 1);
+  }
 }
 
 function updateSearchEnabled() {
