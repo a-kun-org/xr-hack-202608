@@ -173,7 +173,7 @@ function ensureOverlays() {
   }
   if (!map.getSource("route")) {
     map.addSource("route", { type: "geojson", data: emptyCollection() });
-    map.addLayer({
+    addTopLayer({
       id: "route-line",
       type: "line",
       source: "route",
@@ -187,6 +187,26 @@ function ensureOverlays() {
   }
 }
 
+function addTopLayer(layer: {
+  id: string;
+  type: "line" | "fill";
+  source: string;
+  layout?: Record<string, string>;
+  paint: Record<string, string | number>;
+}) {
+  if (!map) return;
+  // Standard スタイルだけ slot が必要。自前のラスタースタイルに付けると線が消える。
+  if (softwareWebGL) {
+    map.addLayer(layer);
+    return;
+  }
+  try {
+    map.addLayer({ ...layer, slot: "top" });
+  } catch {
+    map.addLayer(layer);
+  }
+}
+
 function paintUnderground() {
   if (!map || !underground) return;
   ensureOverlays();
@@ -195,20 +215,49 @@ function paintUnderground() {
   );
 }
 
+const routeCanvas = document.getElementById("route-canvas") as HTMLCanvasElement;
+
+function paintRouteCanvas(path: LatLng[] | null) {
+  const w = mapEl.clientWidth;
+  const h = mapEl.clientHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (routeCanvas.width !== w * dpr || routeCanvas.height !== h * dpr) {
+    routeCanvas.width = w * dpr;
+    routeCanvas.height = h * dpr;
+  }
+  const ctx = routeCanvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (!map || !path || path.length < 2) return;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "#007AFF";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  for (let i = 0; i < path.length; i++) {
+    const p = map.project(lngLat(path[i]));
+    if (i === 0) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+  }
+  ctx.stroke();
+}
+
 function setRouteLine(path: LatLng[] | null) {
   if (!map) return;
   ensureOverlays();
-  const src = map.getSource("route") as GeoJSONSource;
+  const src = map.getSource("route") as GeoJSONSource | undefined;
   if (!path || path.length < 2) {
-    src.setData(emptyCollection());
+    src?.setData(emptyCollection());
+    paintRouteCanvas(null);
     return;
   }
-  src.setData({
+  src?.setData({
     type: "Feature",
     properties: {},
     geometry: { type: "LineString", coordinates: path.map(lngLat) },
   });
-  if (map.getLayer("route-line")) map.moveLayer("route-line");
+  paintRouteCanvas(path);
 }
 
 type TapMode = "origin" | "dest" | "inspect";
@@ -660,6 +709,12 @@ function initMap() {
     if (lastResult) setRouteLine(lastResult.path);
   });
   current.on("click", onMapClick);
+  current.on("move", () => {
+    if (lastResult) paintRouteCanvas(lastResult.path);
+  });
+  window.addEventListener("resize", () => {
+    if (lastResult) paintRouteCanvas(lastResult.path);
+  });
   map = current;
 }
 
