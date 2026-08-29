@@ -125,7 +125,7 @@ function showMapError(message: string) {
 function onMapReady(fn: () => void) {
   if (!map) return;
   if (map.isStyleLoaded()) fn();
-  else map.once("load", fn);
+  else map.once("idle", fn);
 }
 
 function ensureOverlays() {
@@ -146,26 +146,30 @@ function ensureOverlays() {
     });
   }
   if (!map.getSource("underground")) {
-    map.addSource("underground", { type: "geojson", data: emptyCollection() });
-    map.addLayer({
-      id: "underground-fill",
-      type: "fill",
-      source: "underground",
-      filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "fill-color": "#AF52DE", "fill-opacity": 0.16 },
-    });
-    map.addLayer({
-      id: "underground-line",
-      type: "line",
-      source: "underground",
-      filter: ["==", ["geometry-type"], "LineString"],
-      layout: { "line-cap": "round", "line-join": "round" },
-      paint: {
-        "line-color": "#AF52DE",
-        "line-width": 4,
-        "line-opacity": 0.45,
-      },
-    });
+    try {
+      map.addSource("underground", { type: "geojson", data: emptyCollection() });
+      map.addLayer({
+        id: "underground-fill",
+        type: "fill",
+        source: "underground",
+        filter: ["==", ["geometry-type"], "Polygon"],
+        paint: { "fill-color": "#AF52DE", "fill-opacity": 0.16 },
+      });
+      map.addLayer({
+        id: "underground-line",
+        type: "line",
+        source: "underground",
+        filter: ["==", ["geometry-type"], "LineString"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": "#AF52DE",
+          "line-width": 4,
+          "line-opacity": 0.45,
+        },
+      });
+    } catch (err) {
+      console.warn("underground overlay skipped", err);
+    }
   }
   if (!map.getSource("route")) {
     map.addSource("route", { type: "geojson", data: emptyCollection() });
@@ -204,6 +208,7 @@ function setRouteLine(path: LatLng[] | null) {
     properties: {},
     geometry: { type: "LineString", coordinates: path.map(lngLat) },
   });
+  if (map.getLayer("route-line")) map.moveLayer("route-line");
 }
 
 type TapMode = "origin" | "dest" | "inspect";
@@ -357,20 +362,20 @@ function showResult(result: RouteResult, fitted: boolean) {
     underHit,
     graph?.walkSpeedMps ?? 1.2
   );
-  onMapReady(() => {
-    setRouteLine(result.path);
-    if (fitted) {
-      const bounds = new LngLatBounds();
-      for (const p of result.path) bounds.extend(lngLat(p));
-      const wide = window.innerWidth > 720;
-      currentMap.fitBounds(bounds, {
-        padding: wide
-          ? { top: 24, left: 420, bottom: 24, right: 24 }
-          : { top: 24, left: 24, bottom: 280, right: 24 },
-        duration: 600,
-      });
-    }
-  });
+  setRouteLine(result.path);
+  const fit = () => {
+    if (!fitted) return;
+    const bounds = new LngLatBounds();
+    for (const p of result.path) bounds.extend(lngLat(p));
+    const wide = window.innerWidth > 720;
+    currentMap.fitBounds(bounds, {
+      padding: wide
+        ? { top: 24, left: 420, bottom: 24, right: 24 }
+        : { top: 24, left: 24, bottom: 280, right: 24 },
+      duration: 600,
+    });
+  };
+  if (fitted) onMapReady(fit);
 
   const openIndex = routeSignals.findIndex((p) => p.popup.isOpen());
   for (const pin of routeSignals) {
