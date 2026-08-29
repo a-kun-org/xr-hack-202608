@@ -38,10 +38,10 @@ NEAR_SIGNAL_M = 18.0
 # ~5.2km bbox
 BBOX = (43.022, 141.288, 43.115, 141.414)  # south, west, north, east
 
-# 歩道・歩行者空間のみ。幹線の車道は使わない
+# 歩道・歩行者空間のみ（札幌中心部は footway が十分ある）
 WALK_ONLY = {"footway", "path", "pedestrian", "steps", "living_street"}
-# 裏道。歩道が別にある／車道通行禁止なら除外
-MIXED_WALK = {"residential", "unclassified", "service", "track", "cycleway"}
+# 車道中心線。OSM では sidewalk 未記入が多く「歩ける」と誤判定しやすい
+CARRIAGEWAY = {"residential", "unclassified", "service", "track", "cycleway"}
 
 
 def way_walkable(tags: dict) -> bool:
@@ -52,11 +52,16 @@ def way_walkable(tags: dict) -> bool:
     hw = tags.get("highway", "")
     if hw in WALK_ONLY:
         return True
-    if hw in MIXED_WALK:
-        # 歩道が別ジオメトリ／タグである車道は歩かない
+    if hw in CARRIAGEWAY:
+        # 歩道が別にある車道は使わない
         if tags.get("sidewalk") in {"both", "left", "right", "separate"}:
             return False
-        return True
+        # 共有空間（歩道なし）か、歩行明示がある場合だけ車道を許可
+        if tags.get("sidewalk") == "no":
+            return True
+        if tags.get("foot") in {"yes", "designated"}:
+            return True
+        return False
     return False
 
 
