@@ -42,9 +42,13 @@ type RawGraph = {
 };
 
 export type SignalStop = {
+  index: number;
   lat: number;
   lng: number;
+  arriveAt: number;
   waitSec: number;
+  crossAt: number;
+  clearAt: number;
   cycle: number;
   green: number;
   offset: number;
@@ -321,6 +325,7 @@ export function findRoute(
 
   const signalStops: SignalStop[] = [];
   const seenStop = new Set<string>();
+  let signalIndex = 0;
   for (let i = 1; i < ids.length; i++) {
     const from = ids[i - 1];
     const to = ids[i];
@@ -329,6 +334,7 @@ export function findRoute(
     const key = `${from}-${to}`;
     if (seenStop.has(key)) continue;
     seenStop.add(key);
+    signalIndex += 1;
     const timing = timingFor(
       to,
       edge.cycleSec,
@@ -336,11 +342,16 @@ export function findRoute(
       graph.defaultPedGreenSec
     );
     const atNear = dist.get(from) ?? 0;
+    const waitSec = nodeWait[i] ?? waitIfRed(departAt + atNear, timing);
     const n = nodeById.get(from)!;
     signalStops.push({
+      index: signalIndex,
       lat: n.lat,
       lng: n.lng,
-      waitSec: waitIfRed(departAt + atNear, timing),
+      arriveAt: departAt + atNear,
+      waitSec,
+      crossAt: departAt + atNear + waitSec,
+      clearAt: departAt + (dist.get(to) ?? atNear + waitSec + edge.walkSec),
       ...timing,
     });
   }

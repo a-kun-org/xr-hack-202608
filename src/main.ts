@@ -103,7 +103,15 @@ function updateLiveSignals() {
       color: green ? "#34C759" : "#FF3B30",
       fillColor: green ? "#34C759" : "#FF3B30",
     });
-    marker.setTooltipContent(green ? `青 あと${remain}秒` : `赤 あと${remain}秒`);
+    const arrive = formatClock(new Date(stop.arriveAt * 1000));
+    const cross = formatClock(new Date(stop.crossAt * 1000));
+    const plan =
+      stop.waitSec > 0.5
+        ? `${arrive}到着 → ${formatDuration(stop.waitSec)}待ち → ${cross}に横断`
+        : `${arrive}到着・青のためそのまま横断`;
+    marker.setTooltipContent(
+      `#${stop.index} ${plan}<br>いま ${green ? "青" : "赤"} あと${remain}秒`
+    );
   });
 }
 
@@ -157,7 +165,7 @@ function showResult(result: RouteResult, fitted: boolean) {
       fillColor: "#FF3B30",
       fillOpacity: 0.9,
     }).addTo(map);
-    marker.bindTooltip("", { permanent: false, direction: "top" });
+    marker.bindTooltip("", { permanent: false, direction: "top", opacity: 0.95 });
     return marker;
   });
   updateLiveSignals();
@@ -175,6 +183,36 @@ function showResult(result: RouteResult, fitted: boolean) {
   (document.getElementById("r-walk")!).textContent = formatDuration(result.walkSec);
   (document.getElementById("r-wait")!).textContent = formatDuration(result.waitSec);
   (document.getElementById("r-signals")!).textContent = String(result.signalCount);
+
+  const timeline = document.getElementById("signal-timeline")!;
+  timeline.replaceChildren();
+  if (result.signalStops.length === 0) {
+    const empty = document.createElement("li");
+    empty.textContent = "歩行者用信号のある横断はありません";
+    timeline.append(empty);
+  } else {
+    for (const stop of result.signalStops) {
+      const li = document.createElement("li");
+      const wait = stop.waitSec > 0.5;
+      const clear = formatClock(new Date(stop.clearAt * 1000));
+      li.innerHTML = `
+        <div class="timeline-head">
+          <span class="badge">信号 ${stop.index}</span>
+          <span class="state ${wait ? "wait" : "go"}">${wait ? "赤待ち" : "青通過"}</span>
+        </div>
+        <div class="timeline-body">
+          <div>到着 <strong>${formatClock(new Date(stop.arriveAt * 1000))}</strong></div>
+          ${
+            wait
+              ? `<div>待ち <strong>${formatDuration(stop.waitSec)}</strong> → 青 <strong>${formatClock(new Date(stop.crossAt * 1000))}</strong> に横断開始</div>`
+              : `<div>青のため <strong>${formatClock(new Date(stop.crossAt * 1000))}</strong> にそのまま横断</div>`
+          }
+          <div>渡り終わり <strong>${clear}</strong></div>
+        </div>
+      `;
+      timeline.append(li);
+    }
+  }
   resultEl.hidden = false;
 }
 

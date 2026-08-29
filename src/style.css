@@ -269,6 +269,60 @@ h1 {
   margin-bottom: 12px;
 }
 
+.timeline {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.timeline li {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--sheet-solid);
+}
+
+.timeline-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.timeline-head .badge {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--system-blue);
+}
+
+.timeline-head .state {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.timeline-head .state.wait {
+  color: var(--system-red);
+}
+
+.timeline-head .state.go {
+  color: var(--system-green);
+}
+
+.timeline-body {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--secondary-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-body strong {
+  color: var(--label);
+  font-weight: 600;
+}
+
 .note {
   font-size: 13px;
   line-height: 1.35;
