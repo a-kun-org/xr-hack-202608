@@ -7,7 +7,6 @@ import {
   formatClock,
   formatDuration,
   normalizeGraph,
-  phaseRemain,
   pointAtElapsed,
   snapToNode,
   type GraphData,
@@ -94,23 +93,22 @@ function tickClock() {
 
 function updateLiveSignals() {
   if (!lastResult) return;
-  const now = Date.now() / 1000;
   lastResult.signalStops.forEach((stop, i) => {
     const marker = routeSignals[i];
     if (!marker) return;
-    const { green, remain } = phaseRemain(now, stop);
+    // 通過時の色: 到着が赤なら赤待ち、青なら青通過（現況の点滅ではない）
+    const passGreen = stop.waitSec <= 0.5;
     marker.setStyle({
-      color: green ? "#34C759" : "#FF3B30",
-      fillColor: green ? "#34C759" : "#FF3B30",
+      color: passGreen ? "#34C759" : "#FF3B30",
+      fillColor: passGreen ? "#34C759" : "#FF3B30",
     });
     const arrive = formatClock(new Date(stop.arriveAt * 1000));
     const cross = formatClock(new Date(stop.crossAt * 1000));
-    const plan =
-      stop.waitSec > 0.5
-        ? `${arrive}到着 → ${formatDuration(stop.waitSec)}待ち → ${cross}に横断`
-        : `${arrive}到着・青のためそのまま横断`;
+    const plan = passGreen
+      ? `${arrive}到着・青のためそのまま横断`
+      : `${arrive}到着 → ${formatDuration(stop.waitSec)}待ち → ${cross}に横断`;
     marker.setTooltipContent(
-      `#${stop.index} ${plan}<br>いま ${green ? "青" : "赤"} あと${remain}秒`
+      `#${stop.index} ${passGreen ? "青通過" : "赤待ち"}<br>${plan}`
     );
   });
 }
@@ -158,11 +156,12 @@ function showResult(result: RouteResult, fitted: boolean) {
 
   for (const m of routeSignals) map.removeLayer(m);
   routeSignals = result.signalStops.map((stop) => {
+    const passGreen = stop.waitSec <= 0.5;
     const marker = L.circleMarker([stop.lat, stop.lng], {
       radius: 7,
-      color: "#FF3B30",
+      color: passGreen ? "#34C759" : "#FF3B30",
       weight: 2,
-      fillColor: "#FF3B30",
+      fillColor: passGreen ? "#34C759" : "#FF3B30",
       fillOpacity: 0.9,
     }).addTo(map);
     marker.bindTooltip("", { permanent: false, direction: "top", opacity: 0.95 });
