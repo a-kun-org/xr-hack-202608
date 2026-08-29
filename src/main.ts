@@ -176,7 +176,6 @@ function ensureOverlays() {
       id: "route-line",
       type: "line",
       source: "route",
-      filter: ["!=", ["get", "under"], 1],
       ...layerSlot(),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
@@ -185,24 +184,25 @@ function ensureOverlays() {
         "line-opacity": 0.92,
       },
     });
+  }
+  if (!map.getSource("route-under")) {
+    map.addSource("route-under", { type: "geojson", data: emptyCollection() });
     map.addLayer({
       id: "route-under-casing",
       type: "line",
-      source: "route",
-      filter: ["==", ["get", "under"], 1],
+      source: "route-under",
       ...layerSlot(),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": "#ffffff",
         "line-width": 8,
-        "line-opacity": 0.9,
+        "line-opacity": 0.92,
       },
     });
     map.addLayer({
       id: "route-under",
       type: "line",
-      source: "route",
-      filter: ["==", ["get", "under"], 1],
+      source: "route-under",
       ...layerSlot(),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
@@ -229,25 +229,31 @@ function paintUnderground() {
 function setRouteLine(path: LatLng[] | null, underFlags: boolean[] | null = null) {
   if (!map) return;
   ensureOverlays();
-  const src = map.getSource("route") as GeoJSONSource;
+  const surface = map.getSource("route") as GeoJSONSource;
+  const under = map.getSource("route-under") as GeoJSONSource;
   if (!path || path.length < 2) {
-    src.setData(emptyCollection());
+    surface.setData(emptyCollection());
+    under.setData(emptyCollection());
     return;
   }
   if (underFlags && underFlags.length === path.length) {
-    src.setData(splitRouteGeoJSON(path, underFlags));
+    const split = splitRouteGeoJSON(path, underFlags);
+    surface.setData({
+      type: "FeatureCollection",
+      features: split.features.filter((f) => f.properties.under === 0),
+    });
+    under.setData({
+      type: "FeatureCollection",
+      features: split.features.filter((f) => f.properties.under === 1),
+    });
     return;
   }
-  src.setData({
-    type: "FeatureCollection",
-    features: [
-      {
-        type: "Feature",
-        properties: { under: 0 },
-        geometry: { type: "LineString", coordinates: path.map(lngLat) },
-      },
-    ],
+  surface.setData({
+    type: "Feature",
+    properties: {},
+    geometry: { type: "LineString", coordinates: path.map(lngLat) },
   });
+  under.setData(emptyCollection());
 }
 
 type TapMode = "origin" | "dest" | "inspect";
