@@ -482,6 +482,48 @@ function updateSearchEnabled() {
   searchBtn.disabled = dest === null;
 }
 
+function parseLatLngParam(raw: string | null): LatLng | null {
+  if (!raw) return null;
+  const parts = raw.split(",").map((s) => Number(s.trim()));
+  if (parts.length !== 2 || !parts.every(Number.isFinite)) return null;
+  return { lat: parts[0], lng: parts[1] };
+}
+
+function placeOrigin(p: LatLng) {
+  origin = p;
+  void showAddress(originLabel, p, ++originLookup, () => originLookup);
+  originMarker?.setLngLat(lngLat(p));
+}
+
+function placeDest(p: LatLng) {
+  if (!map) return;
+  dest = p;
+  void showAddress(destLabel, p, ++destLookup, () => destLookup);
+  if (destMarker) destMarker.setLngLat(lngLat(p));
+  else {
+    destMarker = new Marker({
+      element: makeDot("#FF3B30", 22),
+      anchor: "center",
+    })
+      .setLngLat(lngLat(p))
+      .addTo(map);
+  }
+  updateSearchEnabled();
+}
+
+function applyQueryRoute() {
+  const q = new URLSearchParams(location.search);
+  const o = parseLatLngParam(q.get("origin"));
+  const d = parseLatLngParam(q.get("dest"));
+  if (!o && !d) return;
+  if (o) placeOrigin(o);
+  if (d) placeDest(d);
+  if (o && d) {
+    searchRoute(false);
+    scheduleRefresh();
+  }
+}
+
 function setTapMode(mode: TapMode, announce = true) {
   tapMode = mode;
   modeOriginBtn.classList.toggle("active", mode === "origin");
@@ -547,7 +589,10 @@ async function loadGraph(): Promise<void> {
   if (!res.ok) throw new Error(`graph.json の取得に失敗 (${res.status})`);
   graph = normalizeGraph(await res.json());
 
-  onMapReady(paintRange);
+  onMapReady(() => {
+    paintRange();
+    applyQueryRoute();
+  });
 
   if (TOKEN) setStatus("地図をタップして終点を指定してください");
 }
@@ -578,9 +623,7 @@ function onMapClick(e: { lngLat: { lat: number; lng: number } }) {
   }
 
   if (tapMode === "origin") {
-    origin = p;
-    void showAddress(originLabel, p, ++originLookup, () => originLookup);
-    originMarker?.setLngLat(lngLat(p));
+    placeOrigin(p);
     resultEl.hidden = true;
     clearRoute();
     updateSearchEnabled();
@@ -589,17 +632,7 @@ function onMapClick(e: { lngLat: { lat: number; lng: number } }) {
     return;
   }
 
-  dest = p;
-  void showAddress(destLabel, p, ++destLookup, () => destLookup);
-  if (destMarker) destMarker.setLngLat(lngLat(p));
-  else {
-    destMarker = new Marker({
-      element: makeDot("#FF3B30", 22),
-      anchor: "center",
-    })
-      .setLngLat(lngLat(p))
-      .addTo(map);
-  }
+  placeDest(p);
 
   updateSearchEnabled();
   resultEl.hidden = true;
