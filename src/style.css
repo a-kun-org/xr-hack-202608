@@ -30,10 +30,10 @@
   --fill: rgba(120, 120, 128, 0.32);
   --grouped: #1c1c1e;
   --sheet: rgba(28, 28, 30, 0.78);
-  --sheet-solid: #1c1c1e;
+  --sheet-solid: #2c2c2e;
   --button-label: #fff;
-  --scrollbar-thumb: rgba(255, 255, 255, 0.28);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.5);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.38);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.55);
 }
 
 * {
@@ -45,8 +45,8 @@
 }
 
 *::-webkit-scrollbar {
-  width: 11px;
-  height: 11px;
+  width: 9px;
+  height: 9px;
 }
 
 *::-webkit-scrollbar-button {
@@ -63,7 +63,7 @@
 *::-webkit-scrollbar-thumb {
   background-color: var(--scrollbar-thumb);
   border-radius: 100px;
-  border: 3px solid transparent;
+  border: 2px solid transparent;
   background-clip: padding-box;
 }
 
