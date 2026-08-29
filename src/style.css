@@ -2,6 +2,7 @@
   --system-blue: #007aff;
   --system-green: #34c759;
   --system-red: #ff3b30;
+  --system-purple: #af52de;
   --label: #000;
   --secondary-label: rgba(60, 60, 67, 0.6);
   --tertiary-label: rgba(60, 60, 67, 0.3);
@@ -20,6 +21,7 @@
     --system-blue: #0a84ff;
     --system-green: #30d158;
     --system-red: #ff453a;
+    --system-purple: #bf5af2;
     --label: #fff;
     --secondary-label: rgba(235, 235, 245, 0.6);
     --tertiary-label: rgba(235, 235, 245, 0.3);
