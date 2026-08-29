@@ -14,11 +14,13 @@ import {
   formatClock,
   formatDuration,
   normalizeGraph,
+  phaseRemain,
   pointAtElapsed,
   snapToNode,
   type GraphData,
   type LatLng,
   type RouteResult,
+  type SignalStop,
 } from "./router";
 
 const SAPPORO_STATION: LatLng = { lat: 43.0687, lng: 141.3508 };
@@ -32,6 +34,7 @@ const destLabel = document.getElementById("dest-label")!;
 const originLabel = document.getElementById("origin-label")!;
 const modeOriginBtn = document.getElementById("mode-origin") as HTMLButtonElement;
 const modeDestBtn = document.getElementById("mode-dest") as HTMLButtonElement;
+const modeInspectBtn = document.getElementById("mode-inspect") as HTMLButtonElement;
 const statusEl = document.getElementById("status")!;
 const searchBtn = document.getElementById("search-btn") as HTMLButtonElement;
 const resultEl = document.getElementById("result")!;
@@ -167,13 +170,14 @@ function setRouteLine(path: LatLng[] | null) {
   });
 }
 
-type SignalPin = { marker: Marker; popup: Popup; el: HTMLElement };
+type TapMode = "origin" | "dest" | "inspect";
+type SignalPin = { marker: Marker; popup: Popup; el: HTMLElement; wrap: HTMLElement };
 
 let graph: GraphData | null = null;
 let origin: LatLng = { ...SAPPORO_STATION };
 let dest: LatLng | null = null;
 let destMarker: Marker | null = null;
-let tapMode: "origin" | "dest" = "dest";
+let tapMode: TapMode = "dest";
 let walkerMarker: Marker | null = null;
 let routeSignals: SignalPin[] = [];
 let lastResult: RouteResult | null = null;
@@ -194,6 +198,64 @@ function tickClock() {
   updateWalker();
 }
 
+function signalPopupHTML(stop: SignalStop): string {
+  const passGreen = stop.waitSec <= 0.5;
+  const arrive = formatClock(new Date(stop.arriveAt * 1000));
+  const cross = formatClock(new Date(stop.crossAt * 1000));
+  const clear = formatClock(new Date(stop.clearAt * 1000));
+  const plan = passGreen
+    ? `${arrive}到着・青のためそのまま横断`
+    : `${arrive}到着 → ${formatDuration(stop.waitSec)}待ち → ${cross}に横断`;
+  const phase = phaseRemain(Date.now() / 1000, stop);
+  const nowText = phase.green
+    ? `いま青（残り約${phase.remain}秒）`
+    : `いま赤（青まで約${phase.remain}秒）`;
+  return `
+    <div class="signal-popup-title">信号 ${stop.index} ${passGreen ? "青通過" : "赤待ち"}</div>
+    <div>${plan}</div>
+    <div>渡り終わり ${clear}</div>
+    <div class="signal-popup-meta">サイクル ${Math.round(stop.cycle)}秒 / 歩行者青 ${Math.round(stop.green)}秒</div>
+    <div class="signal-popup-meta">${nowText}</div>
+  `;
+}
+
+function updateInspectEnabled() {
+  modeInspectBtn.disabled =
+    lastResult === null || lastResult.signalStops.length === 0;
+}
+
+function nearestSignalIndex(
+  click: LatLng,
+  maxPx = 36
+): number | null {
+  if (!map || !lastResult) return null;
+  const c = map.project([click.lng, click.lat]);
+  let best = maxPx;
+  let bestIndex: number | null = null;
+  for (const stop of lastResult.signalStops) {
+    const p = map.project([stop.lng, stop.lat]);
+    const d = Math.hypot(p.x - c.x, p.y - c.y);
+    if (d < best) {
+      best = d;
+      bestIndex = stop.index;
+    }
+  }
+  return bestIndex;
+}
+
+function openSignalInfo(index: number) {
+  const i = index - 1;
+  const pin = routeSignals[i];
+  const stop = lastResult?.signalStops[i];
+  if (!pin || !stop || !map) return;
+  for (const other of routeSignals) {
+    if (other !== pin) other.popup.remove();
+    other.wrap.classList.toggle("is-open", other === pin);
+  }
+  pin.popup.setLngLat(lngLat(stop)).setHTML(signalPopupHTML(stop));
+  if (!pin.popup.isOpen()) pin.popup.addTo(map);
+}
+
 function updateLiveSignals() {
   if (!lastResult) return;
   lastResult.signalStops.forEach((stop, i) => {
@@ -203,14 +265,7 @@ function updateLiveSignals() {
     const color = passGreen ? "#34C759" : "#FF3B30";
     pin.el.style.background = color;
     pin.el.style.borderColor = color;
-    const arrive = formatClock(new Date(stop.arriveAt * 1000));
-    const cross = formatClock(new Date(stop.crossAt * 1000));
-    const plan = passGreen
-      ? `${arrive}到着・青のためそのまま横断`
-      : `${arrive}到着 → ${formatDuration(stop.waitSec)}待ち → ${cross}に横断`;
-    pin.popup.setHTML(
-      `#${stop.index} ${passGreen ? "青通過" : "赤待ち"}<br>${plan}`
-    );
+    pin.popup.setHTML(signalPopupHTML(stop));
   });
 }
 
@@ -230,9 +285,14 @@ function clearRoute() {
   onMapReady(() => setRouteLine(null));
   walkerMarker?.remove();
   walkerMarker = null;
-  for (const pin of routeSignals) pin.marker.remove();
+  for (const pin of routeSignals) {
+    pin.popup.remove();
+    pin.marker.remove();
+  }
   routeSignals = [];
   lastResult = null;
+  updateInspectEnabled();
+  if (tapMode === "inspect") setTapMode("dest", false);
 }
 
 function showResult(result: RouteResult, fitted: boolean) {
@@ -254,24 +314,41 @@ function showResult(result: RouteResult, fitted: boolean) {
     }
   });
 
-  for (const pin of routeSignals) pin.marker.remove();
+  const openIndex = routeSignals.findIndex((p) => p.popup.isOpen());
+  for (const pin of routeSignals) {
+    pin.popup.remove();
+    pin.marker.remove();
+  }
   routeSignals = result.signalStops.map((stop) => {
     const passGreen = stop.waitSec <= 0.5;
     const color = passGreen ? "#34C759" : "#FF3B30";
     const el = makeDot(color, 14, `2px solid ${color}`);
-    el.style.cursor = "pointer";
+    const wrap = document.createElement("div");
+    wrap.className = "signal-pin";
+    wrap.append(el);
     const popup = new Popup({
-      closeButton: false,
-      offset: 12,
+      closeButton: true,
+      closeOnClick: false,
+      offset: 16,
       className: "signal-popup",
     });
-    const marker = new Marker({ element: el, anchor: "center" })
+    popup.on("close", () => wrap.classList.remove("is-open"));
+    wrap.addEventListener("click", (ev) => {
+      if (tapMode !== "inspect") return;
+      ev.stopPropagation();
+      openSignalInfo(stop.index);
+    });
+    const marker = new Marker({ element: wrap, anchor: "center" })
       .setLngLat(lngLat(stop))
-      .setPopup(popup)
       .addTo(currentMap);
-    return { marker, popup, el };
+    return { marker, popup, el, wrap };
   });
   updateLiveSignals();
+  updateInspectEnabled();
+  if (fitted && result.signalStops.length > 0) setTapMode("inspect", false);
+  if (openIndex >= 0 && routeSignals[openIndex]) {
+    openSignalInfo(openIndex + 1);
+  }
 
   if (!walkerMarker) {
     const el = makeDot("#007AFF", 18);
@@ -302,6 +379,8 @@ function showResult(result: RouteResult, fitted: boolean) {
       const li = document.createElement("li");
       const wait = stop.waitSec > 0.5;
       const clear = formatClock(new Date(stop.clearAt * 1000));
+      li.tabIndex = 0;
+      li.setAttribute("role", "button");
       li.innerHTML = `
         <div class="timeline-head">
           <span class="badge">信号 ${stop.index}</span>
@@ -317,6 +396,17 @@ function showResult(result: RouteResult, fitted: boolean) {
           <div>渡り終わり <strong>${clear}</strong></div>
         </div>
       `;
+      const focusStop = () => {
+        if (tapMode !== "inspect") setTapMode("inspect", false);
+        openSignalInfo(stop.index);
+      };
+      li.addEventListener("click", focusStop);
+      li.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          focusStop();
+        }
+      });
       timeline.append(li);
     }
   }
@@ -327,20 +417,25 @@ function updateSearchEnabled() {
   searchBtn.disabled = dest === null;
 }
 
-function setTapMode(mode: "origin" | "dest", announce = true) {
+function setTapMode(mode: TapMode, announce = true) {
   tapMode = mode;
   modeOriginBtn.classList.toggle("active", mode === "origin");
   modeDestBtn.classList.toggle("active", mode === "dest");
+  modeInspectBtn.classList.toggle("active", mode === "inspect");
   if (!announce) return;
   if (!TOKEN) {
     setStatus(TOKEN_ERROR, true);
     return;
   }
-  setStatus(
-    mode === "origin"
-      ? "地図をタップして起点を指定してください"
-      : "地図をタップして終点を指定してください"
-  );
+  if (mode === "origin") {
+    setStatus("地図をタップして起点を指定してください");
+    return;
+  }
+  if (mode === "inspect") {
+    setStatus("交差点をタップすると通過情報を表示します。地点を変えるときは「起点」または「終点」を押してください");
+    return;
+  }
+  setStatus("地図をタップして終点を指定してください");
 }
 
 function searchRoute(silent = false) {
@@ -368,7 +463,9 @@ function searchRoute(silent = false) {
   setStatus(
     silent
       ? `${formatClock()} 時点でルートを更新しました`
-      : "いま出発する場合のルートです（約12秒ごとに再計算）"
+      : result.signalStops.length > 0
+        ? "交差点をタップすると通過情報を表示します。地点を変えるときは「起点」または「終点」を押してください"
+        : "いま出発する場合のルートです（約12秒ごとに再計算）"
   );
 }
 
@@ -393,6 +490,19 @@ async function loadGraph(): Promise<void> {
 function onMapClick(e: { lngLat: { lat: number; lng: number } }) {
   if (!graph || !map) return;
   const p: LatLng = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+
+  if (tapMode === "inspect") {
+    const idx = nearestSignalIndex(p);
+    if (idx !== null) {
+      openSignalInfo(idx);
+      return;
+    }
+    setStatus(
+      "交差点の丸印をタップしてください。地点を変えるときは「起点」または「終点」を押してください"
+    );
+    return;
+  }
+
   const d = distanceFromOriginM(p, graph.origin);
   if (d > graph.maxRadiusM) {
     setStatus(
@@ -489,6 +599,10 @@ if (!TOKEN) {
 
 modeOriginBtn.addEventListener("click", () => setTapMode("origin"));
 modeDestBtn.addEventListener("click", () => setTapMode("dest"));
+modeInspectBtn.addEventListener("click", () => {
+  if (modeInspectBtn.disabled) return;
+  setTapMode("inspect");
+});
 
 searchBtn.addEventListener("click", () => {
   searchRoute(false);

@@ -97,6 +97,34 @@ body {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
 }
 
+.signal-popup .mapboxgl-popup-content {
+  min-width: 168px;
+}
+
+.signal-popup-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.signal-popup-meta {
+  margin-top: 4px;
+  color: var(--secondary-label);
+  font-size: 12px;
+}
+
+.signal-pin {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+}
+
+.signal-pin.is-open > div {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.28);
+}
+
 .sheet {
   position: absolute;
   z-index: 500;
@@ -170,7 +198,7 @@ h1 {
 
 .segmented {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 2px;
   padding: 2px;
   border-radius: 9px;
@@ -195,6 +223,11 @@ h1 {
 .mode-btn.active {
   background: var(--sheet-solid);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.mode-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .grouped {
@@ -300,6 +333,15 @@ h1 {
   padding: 12px 14px;
   border-radius: 12px;
   background: var(--sheet-solid);
+}
+
+.timeline li[role="button"] {
+  cursor: pointer;
+}
+
+.timeline li[role="button"]:focus-visible {
+  outline: 2px solid var(--system-blue);
+  outline-offset: 2px;
 }
 
 .timeline-head {
