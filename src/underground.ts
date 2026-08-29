@@ -104,8 +104,16 @@ function haversineM(a: LatLng, b: LatLng): number {
 }
 
 function sortNames(names: Iterable<string>): string[] {
-  const set = [...new Set(names)];
-  return set.sort((a, b) => {
+  const set = new Set(names);
+  const named = [...set].some(
+    (n) => n !== "地下通路" && n !== "地下道" && n !== "札幌駅地下"
+  );
+  if (named) {
+    set.delete("地下通路");
+    set.delete("地下道");
+    if (set.has("アピア")) set.delete("札幌駅地下");
+  }
+  return [...set].sort((a, b) => {
     const ia = NAME_ORDER.indexOf(a);
     const ib = NAME_ORDER.indexOf(b);
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, "ja");

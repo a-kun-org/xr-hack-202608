@@ -153,18 +153,20 @@ function ensureOverlays() {
       type: "fill",
       source: "underground",
       filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "fill-color": "#AF52DE", "fill-opacity": 0.16 },
+      ...layerSlot(),
+      paint: { "fill-color": "#AF52DE", "fill-opacity": 0.22 },
     });
     map.addLayer({
       id: "underground-line",
       type: "line",
       source: "underground",
       filter: ["==", ["geometry-type"], "LineString"],
+      ...layerSlot(),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": "#AF52DE",
-        "line-width": 4,
-        "line-opacity": 0.42,
+        "line-width": 5,
+        "line-opacity": 0.62,
       },
     });
   }
@@ -175,6 +177,7 @@ function ensureOverlays() {
       type: "line",
       source: "route",
       filter: ["!=", ["get", "under"], 1],
+      ...layerSlot(),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": "#007AFF",
@@ -183,19 +186,36 @@ function ensureOverlays() {
       },
     });
     map.addLayer({
+      id: "route-under-casing",
+      type: "line",
+      source: "route",
+      filter: ["==", ["get", "under"], 1],
+      ...layerSlot(),
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-width": 8,
+        "line-opacity": 0.9,
+      },
+    });
+    map.addLayer({
       id: "route-under",
       type: "line",
       source: "route",
       filter: ["==", ["get", "under"], 1],
+      ...layerSlot(),
       layout: { "line-cap": "round", "line-join": "round" },
       paint: {
         "line-color": "#AF52DE",
         "line-width": 5,
-        "line-opacity": 0.95,
-        "line-dasharray": [1.4, 1.1],
+        "line-opacity": 1,
       },
     });
   }
+}
+
+function layerSlot(): { slot?: string } {
+  return softwareWebGL ? {} : { slot: "top" };
 }
 
 function paintUnderground() {
