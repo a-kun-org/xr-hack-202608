@@ -328,6 +328,15 @@ h1 {
   line-height: 1.35;
   color: var(--tertiary-label);
   padding: 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.note a {
+  color: inherit;
+}
+
+.note.source {
+  margin: -8px 0 16px;
 }
 
 @media (max-width: 720px) {
