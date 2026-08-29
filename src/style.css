@@ -150,10 +150,6 @@ body {
 }
 
 .sheet-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
   margin-bottom: 8px;
 }
 
@@ -169,24 +165,6 @@ h1 {
   font-weight: 700;
   letter-spacing: -0.3px;
   line-height: 1.2;
-}
-
-.live {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  padding-top: 22px;
-  font-size: 15px;
-  font-variant-numeric: tabular-nums;
-  color: var(--secondary-label);
-}
-
-.live-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--system-red);
 }
 
 .lead {
