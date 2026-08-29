@@ -149,6 +149,11 @@ body {
   background: var(--fill);
 }
 
+.sheet-handle:focus-visible {
+  outline: 2px solid var(--system-blue);
+  outline-offset: 4px;
+}
+
 .sheet-header {
   margin-bottom: 8px;
 }
@@ -381,14 +386,57 @@ h1 {
 
 @media (max-width: 720px) {
   .sheet {
+    display: flex;
+    flex-direction: column;
     left: 0;
     right: 0;
     top: auto;
     bottom: 0;
     width: 100%;
-    max-height: 52vh;
+    height: var(--sheet-h, 52vh);
+    max-height: calc(100dvh - env(safe-area-inset-top) - 8px);
+    overflow: hidden;
     border-radius: 16px 16px 0 0;
     padding-bottom: calc(20px + env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
+  }
+
+  .sheet-body {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .sheet-handle {
+    flex-shrink: 0;
+    width: 100%;
+    height: 24px;
+    margin: 0 0 8px;
+    background: transparent;
+    cursor: ns-resize;
+    touch-action: none;
+    position: relative;
+  }
+
+  .sheet-handle::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 36px;
+    height: 5px;
+    border-radius: 100px;
+    background: var(--fill);
+    transform: translate(-50%, -50%);
+  }
+
+  .sheet.is-resizing {
+    overflow: hidden;
+    user-select: none;
+  }
+
+  .sheet.is-resizing .sheet-handle::after {
+    background: var(--secondary-label);
   }
 
   .map-error {

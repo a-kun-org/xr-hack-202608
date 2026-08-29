@@ -15,53 +15,62 @@
   <body>
     <div id="app">
       <div id="map" role="application" aria-label="地図"></div>
-      <aside class="sheet" aria-label="ルート設定">
-        <div class="sheet-handle" aria-hidden="true"></div>
-        <header class="sheet-header">
-          <p class="eyebrow">徒歩ルート</p>
-          <h1>大都会札幌徒歩最速完全攻略計算機</h1>
-        </header>
-        <p class="lead">
-          いま出発した場合の到着時刻で信号を仮定し、待ち込みの所要時間が最短の徒歩ルートを表示します。
-        </p>
-        <p class="note source">
-          「交差点制御情報」（公益財団法人日本道路交通情報センター）（<a href="https://www.jartic.or.jp/service/opendata/">https://www.jartic.or.jp/service/opendata/</a>）を加工して作成
-        </p>
-        <div class="segmented" role="group" aria-label="地図タップの対象">
-          <button type="button" id="mode-origin" class="mode-btn">起点</button>
-          <button type="button" id="mode-dest" class="mode-btn active">終点</button>
-          <button type="button" id="mode-inspect" class="mode-btn" disabled>
-            交差点
-          </button>
-        </div>
-        <dl class="grouped">
-          <div>
-            <dt>起点</dt>
-            <dd id="origin-label">札幌駅</dd>
-          </div>
-          <div>
-            <dt>終点</dt>
-            <dd id="dest-label">地図をタップして指定</dd>
-          </div>
-        </dl>
-        <p id="status" class="status" role="status"></p>
-        <button id="search-btn" type="button" disabled>いま出発で検索</button>
-        <section id="result" class="result" hidden>
-          <h2>この出発時刻</h2>
-          <ul class="grouped">
-            <li><span>出発</span><strong id="r-depart">—</strong></li>
-            <li><span>到着見込み</span><strong id="r-arrive">—</strong></li>
-            <li><span>所要時間</span><strong id="r-total">—</strong></li>
-            <li><span>歩行</span><strong id="r-walk">—</strong></li>
-            <li><span>信号待ち</span><strong id="r-wait">—</strong></li>
-            <li><span>通過信号</span><strong id="r-signals">—</strong></li>
-          </ul>
-          <h2>信号の通過時刻</h2>
-          <ol id="signal-timeline" class="timeline"></ol>
-          <p class="note">
-            待ちは歩行者用信号のある横断歩道のみです。青になるまで手前で待ち、赤のまま渡りません。サイクルは JARTIC、青は約15秒の仮定です。
+      <aside class="sheet" id="sheet" aria-label="ルート設定">
+        <div
+          class="sheet-handle"
+          id="sheet-handle"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="パネルの高さを調整"
+          aria-controls="sheet"
+        ></div>
+        <div class="sheet-body">
+          <header class="sheet-header">
+            <p class="eyebrow">徒歩ルート</p>
+            <h1>大都会札幌徒歩最速完全攻略計算機</h1>
+          </header>
+          <p class="lead">
+            いま出発した場合の到着時刻で信号を仮定し、待ち込みの所要時間が最短の徒歩ルートを表示します。
           </p>
-        </section>
+          <p class="note source">
+            「交差点制御情報」（公益財団法人日本道路交通情報センター）（<a href="https://www.jartic.or.jp/service/opendata/">https://www.jartic.or.jp/service/opendata/</a>）を加工して作成
+          </p>
+          <div class="segmented" role="group" aria-label="地図タップの対象">
+            <button type="button" id="mode-origin" class="mode-btn">起点</button>
+            <button type="button" id="mode-dest" class="mode-btn active">終点</button>
+            <button type="button" id="mode-inspect" class="mode-btn" disabled>
+              交差点
+            </button>
+          </div>
+          <dl class="grouped">
+            <div>
+              <dt>起点</dt>
+              <dd id="origin-label">札幌駅</dd>
+            </div>
+            <div>
+              <dt>終点</dt>
+              <dd id="dest-label">地図をタップして指定</dd>
+            </div>
+          </dl>
+          <p id="status" class="status" role="status"></p>
+          <button id="search-btn" type="button" disabled>いま出発で検索</button>
+          <section id="result" class="result" hidden>
+            <h2>この出発時刻</h2>
+            <ul class="grouped">
+              <li><span>出発</span><strong id="r-depart">—</strong></li>
+              <li><span>到着見込み</span><strong id="r-arrive">—</strong></li>
+              <li><span>所要時間</span><strong id="r-total">—</strong></li>
+              <li><span>歩行</span><strong id="r-walk">—</strong></li>
+              <li><span>信号待ち</span><strong id="r-wait">—</strong></li>
+              <li><span>通過信号</span><strong id="r-signals">—</strong></li>
+            </ul>
+            <h2>信号の通過時刻</h2>
+            <ol id="signal-timeline" class="timeline"></ol>
+            <p class="note">
+              待ちは歩行者用信号のある横断歩道のみです。青になるまで手前で待ち、赤のまま渡りません。サイクルは JARTIC、青は約15秒の仮定です。
+            </p>
+          </section>
+        </div>
       </aside>
     </div>
     <script type="module" src="/src/main.ts"></script>
