@@ -271,7 +271,7 @@ export function findRoute(
     if (cur.id === endId) break;
 
     for (const edge of adj.get(cur.id) ?? []) {
-      const arrive = d + edge.walkSec;
+      // 歩行者信号は横断前に待つ（赤のまま渡らない）
       let wait = 0;
       if (edge.isSignal) {
         const timing = timingFor(
@@ -280,9 +280,9 @@ export function findRoute(
           graph.defaultCycleSec,
           graph.defaultPedGreenSec
         );
-        wait = waitIfRed(departAt + arrive, timing);
+        wait = waitIfRed(departAt + d, timing);
       }
-      const nd = arrive + wait;
+      const nd = d + wait + edge.walkSec;
       if (nd < (dist.get(edge.to) ?? Infinity)) {
         dist.set(edge.to, nd);
         walkAcc.set(edge.to, (walkAcc.get(cur.id) ?? 0) + edge.walkSec);
@@ -320,25 +320,27 @@ export function findRoute(
   });
 
   const signalStops: SignalStop[] = [];
-  const seenStop = new Set<number>();
+  const seenStop = new Set<string>();
   for (let i = 1; i < ids.length; i++) {
     const from = ids[i - 1];
     const to = ids[i];
     const edge = (adj.get(from) ?? []).find((e) => e.to === to);
-    if (!edge?.isSignal || seenStop.has(to)) continue;
-    seenStop.add(to);
+    if (!edge?.isSignal) continue;
+    const key = `${from}-${to}`;
+    if (seenStop.has(key)) continue;
+    seenStop.add(key);
     const timing = timingFor(
       to,
       edge.cycleSec,
       graph.defaultCycleSec,
       graph.defaultPedGreenSec
     );
-    const arrive = (dist.get(from) ?? 0) + edge.walkSec;
-    const n = nodeById.get(to)!;
+    const atNear = dist.get(from) ?? 0;
+    const n = nodeById.get(from)!;
     signalStops.push({
       lat: n.lat,
       lng: n.lng,
-      waitSec: waitIfRed(departAt + arrive, timing),
+      waitSec: waitIfRed(departAt + atNear, timing),
       ...timing,
     });
   }
@@ -373,7 +375,7 @@ export function formatClock(date = new Date()): string {
   });
 }
 
-/** Position along the timed path at elapsed seconds from departure. */
+/** Position along the timed path. waits[i] = wait at path[i-1] before walking to i. */
 export function pointAtElapsed(
   path: LatLng[],
   nodeElapsed: number[],
@@ -383,14 +385,14 @@ export function pointAtElapsed(
   if (path.length === 0) return { lat: 0, lng: 0 };
   if (elapsed <= 0 || path.length === 1) return path[0];
   for (let i = 1; i < path.length; i++) {
+    const t0 = nodeElapsed[i - 1];
     const t1 = nodeElapsed[i];
     if (elapsed > t1) continue;
     const wait = waits[i] ?? 0;
-    const arrive = t1 - wait;
-    if (elapsed >= arrive) return path[i];
-    const t0 = nodeElapsed[i - 1];
-    const span = arrive - t0;
-    const u = span <= 0 ? 1 : (elapsed - t0) / span;
+    const depart = t0 + wait;
+    if (elapsed < depart) return path[i - 1];
+    const span = t1 - depart;
+    const u = span <= 0 ? 1 : (elapsed - depart) / span;
     return {
       lat: path[i - 1].lat + (path[i].lat - path[i - 1].lat) * u,
       lng: path[i - 1].lng + (path[i].lng - path[i - 1].lng) * u,

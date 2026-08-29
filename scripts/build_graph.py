@@ -38,22 +38,26 @@ NEAR_SIGNAL_M = 18.0
 # ~5.2km bbox
 BBOX = (43.022, 141.288, 43.115, 141.414)  # south, west, north, east
 
-FOOT_HIGHWAYS = {
-    "footway",
-    "path",
-    "pedestrian",
-    "steps",
-    "living_street",
-    "residential",
-    "unclassified",
-    "service",
-    "tertiary",
-    "secondary",
-    "primary",
-    "trunk",
-    "track",
-    "cycleway",
-}
+# 歩道・歩行者空間のみ。幹線の車道は使わない
+WALK_ONLY = {"footway", "path", "pedestrian", "steps", "living_street"}
+# 裏道。歩道が別にある／車道通行禁止なら除外
+MIXED_WALK = {"residential", "unclassified", "service", "track", "cycleway"}
+
+
+def way_walkable(tags: dict) -> bool:
+    if tags.get("foot") in {"no", "private", "use_sidepath"}:
+        return False
+    if tags.get("footway") == "crossing" or tags.get("highway") == "crossing":
+        return True
+    hw = tags.get("highway", "")
+    if hw in WALK_ONLY:
+        return True
+    if hw in MIXED_WALK:
+        # 歩道が別ジオメトリ／タグである車道は歩かない
+        if tags.get("sidewalk") in {"both", "left", "right", "separate"}:
+            return False
+        return True
+    return False
 
 
 def haversine_m(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float:
@@ -367,7 +371,6 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
         return grid
 
     ped_grid = index_pts(ped_pts)
-    vehicle_grid = index_pts(vehicle_pts)
 
     def near_any(
         lat: float,
@@ -384,7 +387,11 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
         return False
 
     def way_is_ped_crossing(tags: dict, nds: list[int]) -> bool:
-        if not is_crossing_way(tags) or is_uncontrolled_crossing(tags):
+        """歩行者用信号がある横断歩道のみ True（車用信号の近接だけでは待たない）。"""
+        if is_uncontrolled_crossing(tags):
+            return False
+        # 横断歩道として明示されたウェイだけが対象
+        if not is_crossing_way(tags):
             return False
         if (
             tags.get("crossing") in {"traffic_signals", "toucan"}
@@ -393,12 +400,9 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
             return True
         if any(n in ped_signal_ids for n in nds):
             return True
-        # 横断歩道が信号交差点に接していれば歩行者用待ちを付ける
         for nid in nds:
             n = nodes_raw[nid]
             if near_any(n["lat"], n["lng"], ped_grid, NEAR_SIGNAL_M):
-                return True
-            if near_any(n["lat"], n["lng"], vehicle_grid, NEAR_SIGNAL_M):
                 return True
         return False
 
@@ -407,10 +411,7 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
     ped_edge_count = 0
     for way in ways:
         tags = way.get("tags", {})
-        hw = tags.get("highway", "")
-        if hw not in FOOT_HIGHWAYS and tags.get("footway") != "crossing":
-            continue
-        if tags.get("foot") in {"no", "private"}:
+        if not way_walkable(tags):
             continue
         nds = [n for n in way.get("nodes", []) if n in id_map]
         ped_crossing = way_is_ped_crossing(tags, nds)
@@ -439,6 +440,21 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
                 if ped_crossing:
                     ped_edge_count += 1
     print(f"  edges={len(edges_out)} pedCrossingEdges={ped_edge_count}", flush=True)
+
+    used = {e["from"] for e in edges_out} | {e["to"] for e in edges_out}
+    remap: dict[int, int] = {}
+    nodes_kept: list[dict] = []
+    for n in nodes_out:
+        if n["id"] not in used:
+            continue
+        new_id = len(nodes_kept)
+        remap[n["id"]] = new_id
+        nodes_kept.append({"id": new_id, "lat": n["lat"], "lng": n["lng"]})
+    for e in edges_out:
+        e["from"] = remap[e["from"]]
+        e["to"] = remap[e["to"]]
+    print(f"  pruned nodes {len(nodes_out)} -> {len(nodes_kept)}", flush=True)
+    nodes_out = nodes_kept
 
     signals_out = []
     for osm_id in ped_signal_ids:
