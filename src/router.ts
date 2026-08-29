@@ -11,7 +11,7 @@ export type GraphEdge = {
   to: number;
   lengthM: number;
   walkSec: number;
-  waitSec: number;
+  cycleSec: number;
   isSignal: boolean;
 };
 
@@ -20,6 +20,7 @@ export type GraphData = {
   maxRadiusM: number;
   walkSpeedMps: number;
   defaultCycleSec: number;
+  defaultPedGreenSec: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
   signals: LatLng[];
@@ -32,6 +33,7 @@ type RawGraph = {
   maxRadiusM: number;
   walkSpeedMps: number;
   defaultCycleSec?: number;
+  defaultPedGreenSec?: number;
   nodes: GraphNode[] | [number, number, number][];
   edges:
     | GraphEdge[]
@@ -74,7 +76,7 @@ export function normalizeGraph(raw: RawGraph): GraphData {
         to: e[1],
         lengthM: 0,
         walkSec: e[2],
-        waitSec: e[3],
+        cycleSec: e[3],
         isSignal: e[4] === 1,
       };
     }
@@ -89,6 +91,7 @@ export function normalizeGraph(raw: RawGraph): GraphData {
     maxRadiusM: raw.maxRadiusM,
     walkSpeedMps: raw.walkSpeedMps,
     defaultCycleSec: raw.defaultCycleSec ?? 125,
+    defaultPedGreenSec: raw.defaultPedGreenSec ?? 15,
     nodes,
     edges,
     signals,
@@ -101,20 +104,20 @@ export type SignalTiming = {
   offset: number;
 };
 
-/** Derive a repeating phase from JARTIC cycle + node id (no live controller feed). */
+/** Pedestrian walk interval inside a JARTIC vehicle cycle. */
 export function timingFor(
   nodeId: number,
-  expectedWait: number,
-  defaultCycle: number
+  cycleSec: number,
+  defaultCycle: number,
+  pedGreen: number
 ): SignalTiming {
   const cycle = Math.round(
-    expectedWait > 0
-      ? Math.min(200, Math.max(40, expectedWait * 4.5))
-      : defaultCycle
+    cycleSec >= 40 ? Math.min(200, cycleSec) : defaultCycle
   );
+  const green = Math.min(pedGreen, Math.max(7, cycle - 10));
   return {
     cycle,
-    green: cycle / 3,
+    green,
     offset: ((nodeId * 17 + 31) % cycle + cycle) % cycle,
   };
 }
@@ -176,7 +179,7 @@ export function snapToNode(
   return bestId;
 }
 
-type Adj = { to: number; walkSec: number; waitSec: number; isSignal: boolean };
+type Adj = { to: number; walkSec: number; cycleSec: number; isSignal: boolean };
 
 function buildAdj(graph: GraphData): Map<number, Adj[]> {
   const adj = new Map<number, Adj[]>();
@@ -185,7 +188,7 @@ function buildAdj(graph: GraphData): Map<number, Adj[]> {
     a.push({
       to: e.to,
       walkSec: e.walkSec,
-      waitSec: e.waitSec,
+      cycleSec: e.cycleSec,
       isSignal: e.isSignal,
     });
     adj.set(e.from, a);
@@ -270,8 +273,13 @@ export function findRoute(
     for (const edge of adj.get(cur.id) ?? []) {
       const arrive = d + edge.walkSec;
       let wait = 0;
-      if (edge.isSignal && edge.waitSec > 0) {
-        const timing = timingFor(edge.to, edge.waitSec, graph.defaultCycleSec);
+      if (edge.isSignal) {
+        const timing = timingFor(
+          edge.to,
+          edge.cycleSec,
+          graph.defaultCycleSec,
+          graph.defaultPedGreenSec
+        );
         wait = waitIfRed(departAt + arrive, timing);
       }
       const nd = arrive + wait;
@@ -317,9 +325,14 @@ export function findRoute(
     const from = ids[i - 1];
     const to = ids[i];
     const edge = (adj.get(from) ?? []).find((e) => e.to === to);
-    if (!edge?.isSignal || edge.waitSec <= 0 || seenStop.has(to)) continue;
+    if (!edge?.isSignal || seenStop.has(to)) continue;
     seenStop.add(to);
-    const timing = timingFor(to, edge.waitSec, graph.defaultCycleSec);
+    const timing = timingFor(
+      to,
+      edge.cycleSec,
+      graph.defaultCycleSec,
+      graph.defaultPedGreenSec
+    );
     const arrive = (dist.get(from) ?? 0) + edge.walkSec;
     const n = nodeById.get(to)!;
     signalStops.push({

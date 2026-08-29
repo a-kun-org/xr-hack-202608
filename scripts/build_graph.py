@@ -32,7 +32,8 @@ MAX_RADIUS_M = 5000
 WALK_SPEED = 1.2  # m/s
 MATCH_M = 60
 DEFAULT_CYCLE = 90.0
-DEFAULT_GREEN_RATIO = 1 / 3
+DEFAULT_PED_GREEN = 15.0  # 歩行者青（点滅は含めない）
+NEAR_SIGNAL_M = 18.0
 
 # ~5.2km bbox
 BBOX = (43.022, 141.288, 43.115, 141.414)  # south, west, north, east
@@ -65,12 +66,35 @@ def haversine_m(a_lat: float, a_lng: float, b_lat: float, b_lng: float) -> float
 
 
 def expected_wait(cycle: float, green: float | None = None) -> float:
-    g = green if green is not None else cycle * DEFAULT_GREEN_RATIO
+    g = green if green is not None else DEFAULT_PED_GREEN
     g = max(0.0, min(g, cycle))
     red = cycle - g
     if cycle <= 0:
         return 0.0
     return (red * red) / (2.0 * cycle)
+
+
+def is_ped_signal_node(tags: dict) -> bool:
+    return tags.get("crossing") in {"traffic_signals", "toucan"} or tags.get(
+        "crossing:signals"
+    ) == "yes"
+
+
+def is_vehicle_signal_node(tags: dict) -> bool:
+    return tags.get("highway") == "traffic_signals" and not is_ped_signal_node(tags)
+
+
+def is_crossing_way(tags: dict) -> bool:
+    return (
+        tags.get("footway") == "crossing"
+        or tags.get("highway") == "crossing"
+        or tags.get("crossing") in {"traffic_signals", "toucan", "marked"}
+        or tags.get("crossing:signals") == "yes"
+    )
+
+
+def is_uncontrolled_crossing(tags: dict) -> bool:
+    return tags.get("crossing") in {"uncontrolled", "unmarked"}
 
 
 def overpass_query() -> str:
@@ -264,42 +288,48 @@ def load_signal_locations() -> list[dict]:
 def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> dict:
     nodes_raw: dict[int, dict] = {}
     ways: list[dict] = []
-    signal_osm_ids: set[int] = set()
+    ped_signal_ids: set[int] = set()
+    vehicle_pts: list[tuple[float, float]] = []
+    ped_pts: list[tuple[float, float]] = []
 
     print("Parsing OSM elements…", flush=True)
     for el in osm.get("elements", []):
         if el["type"] == "node":
+            tags = el.get("tags", {})
             nodes_raw[el["id"]] = {
                 "lat": el["lat"],
                 "lng": el["lon"],
-                "tags": el.get("tags", {}),
+                "tags": tags,
             }
-            tags = el.get("tags", {})
-            if tags.get("highway") == "traffic_signals" or tags.get("crossing") in {
-                "traffic_signals",
-                "toucan",
-            }:
-                signal_osm_ids.add(el["id"])
+            if is_ped_signal_node(tags):
+                ped_signal_ids.add(el["id"])
+                ped_pts.append((el["lat"], el["lon"]))
+            elif is_vehicle_signal_node(tags):
+                vehicle_pts.append((el["lat"], el["lon"]))
         elif el["type"] == "way":
             ways.append(el)
     print(
-        f"  nodes={len(nodes_raw)} ways={len(ways)} osmSignals={len(signal_osm_ids)}",
+        f"  nodes={len(nodes_raw)} ways={len(ways)} "
+        f"pedSignals={len(ped_signal_ids)} vehicleSignals={len(vehicle_pts)}",
         flush=True,
     )
 
+    # (lat, lng, cycle) from JARTIC-mapped intersections
     mapped: list[tuple[float, float, float]] = []
     for loc in locations:
         iid = str(loc.get("intersectionId", loc.get("id", "")))
         lat = float(loc["lat"])
         lng = float(loc["lng"])
         cycle = float(loc.get("cycle") or cycles.get(iid) or DEFAULT_CYCLE)
-        green = loc.get("green")
-        wait = expected_wait(cycle, float(green) if green is not None else None)
-        mapped.append((lat, lng, wait))
+        mapped.append((lat, lng, cycle))
 
     default_cycle = statistics.median(cycles.values()) if cycles else DEFAULT_CYCLE
-    default_wait = expected_wait(float(default_cycle))
-    print(f"  defaultWait={default_wait:.1f}s (cycle={default_cycle})", flush=True)
+    default_wait = expected_wait(float(default_cycle), DEFAULT_PED_GREEN)
+    print(
+        f"  pedGreen={DEFAULT_PED_GREEN:.0f}s cycle={default_cycle:.0f}s "
+        f"E[wait]={default_wait:.1f}s",
+        flush=True,
+    )
 
     lat_pad = (MAX_RADIUS_M + 200) / 111_000
     lng_pad = (MAX_RADIUS_M + 200) / (111_000 * math.cos(math.radians(ORIGIN["lat"])))
@@ -319,53 +349,62 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
         nodes_out.append({"id": new_id, "lat": n["lat"], "lng": n["lng"]})
     print(f"  kept nodes={len(nodes_out)}", flush=True)
 
-    node_wait: dict[int, float] = {}
-
-    # Grid of kept nodes for snapping signals onto the walk network
-    cell = 0.0005
-    node_grid: dict[tuple[int, int], list[tuple[int, float, float]]] = defaultdict(list)
-    for osm_id, new_id in id_map.items():
-        n = nodes_raw[osm_id]
-        key = (int(n["lat"] / cell), int(n["lng"] / cell))
-        node_grid[key].append((new_id, n["lat"], n["lng"]))
-
-    def snap_wait(lat: float, lng: float, wait: float, max_m: float = 28.0) -> None:
-        i, j = int(lat / cell), int(lng / cell)
-        best_id = None
-        best_d = max_m
-        for di in (-1, 0, 1):
-            for dj in (-1, 0, 1):
-                for new_id, nlat, nlng in node_grid.get((i + di, j + dj), []):
-                    d = haversine_m(nlat, nlng, lat, lng)
-                    if d < best_d:
-                        best_d = d
-                        best_id = new_id
-        if best_id is not None:
-            # keep larger wait if already set
-            node_wait[best_id] = max(node_wait.get(best_id, 0.0), wait)
-
-    for osm_id in signal_osm_ids:
-        n = nodes_raw[osm_id]
-        if osm_id not in id_map and haversine_m(
-            ORIGIN["lat"], ORIGIN["lng"], n["lat"], n["lng"]
-        ) > MAX_RADIUS_M + 200:
-            continue
-        wait = default_wait
+    def cycle_near(lat: float, lng: float) -> float:
         best = MATCH_M
-        for mlat, mlng, mwait in mapped:
-            d = haversine_m(n["lat"], n["lng"], mlat, mlng)
+        cycle = float(default_cycle)
+        for mlat, mlng, mcyc in mapped:
+            d = haversine_m(lat, lng, mlat, mlng)
             if d < best:
                 best = d
-                wait = mwait
-        snap_wait(n["lat"], n["lng"], wait)
+                cycle = mcyc
+        return cycle
 
-    for mlat, mlng, mwait in mapped:
-        snap_wait(mlat, mlng, mwait, max_m=25.0)
+    cell = 0.0002
+    def index_pts(pts: list[tuple[float, float]]) -> dict[tuple[int, int], list[tuple[float, float]]]:
+        grid: dict[tuple[int, int], list[tuple[float, float]]] = defaultdict(list)
+        for plat, plng in pts:
+            grid[(int(plat / cell), int(plng / cell))].append((plat, plng))
+        return grid
 
-    print(f"  signal-attached nodes={len(node_wait)}", flush=True)
+    ped_grid = index_pts(ped_pts)
+    vehicle_grid = index_pts(vehicle_pts)
+
+    def near_any(
+        lat: float,
+        lng: float,
+        grid: dict[tuple[int, int], list[tuple[float, float]]],
+        max_m: float,
+    ) -> bool:
+        i, j = int(lat / cell), int(lng / cell)
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                for plat, plng in grid.get((i + di, j + dj), []):
+                    if haversine_m(lat, lng, plat, plng) <= max_m:
+                        return True
+        return False
+
+    def way_is_ped_crossing(tags: dict, nds: list[int]) -> bool:
+        if not is_crossing_way(tags) or is_uncontrolled_crossing(tags):
+            return False
+        if (
+            tags.get("crossing") in {"traffic_signals", "toucan"}
+            or tags.get("crossing:signals") == "yes"
+        ):
+            return True
+        if any(n in ped_signal_ids for n in nds):
+            return True
+        # 横断歩道が信号交差点に接していれば歩行者用待ちを付ける
+        for nid in nds:
+            n = nodes_raw[nid]
+            if near_any(n["lat"], n["lng"], ped_grid, NEAR_SIGNAL_M):
+                return True
+            if near_any(n["lat"], n["lng"], vehicle_grid, NEAR_SIGNAL_M):
+                return True
+        return False
 
     edges_out: list[dict] = []
     seen: set[tuple[int, int]] = set()
+    ped_edge_count = 0
     for way in ways:
         tags = way.get("tags", {})
         hw = tags.get("highway", "")
@@ -374,36 +413,39 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
         if tags.get("foot") in {"no", "private"}:
             continue
         nds = [n for n in way.get("nodes", []) if n in id_map]
+        ped_crossing = way_is_ped_crossing(tags, nds)
         for a, b in zip(nds, nds[1:]):
             na, nb = nodes_raw[a], nodes_raw[b]
             length = haversine_m(na["lat"], na["lng"], nb["lat"], nb["lng"])
             if length < 0.5 or length > 800:
                 continue
             ia, ib = id_map[a], id_map[b]
+            mid_lat = (na["lat"] + nb["lat"]) / 2
+            mid_lng = (na["lng"] + nb["lng"]) / 2
+            cycle = cycle_near(mid_lat, mid_lng) if ped_crossing else 0.0
             for u, v in ((ia, ib), (ib, ia)):
                 if (u, v) in seen:
                     continue
                 seen.add((u, v))
-                wait = node_wait.get(v, 0.0)
                 edges_out.append(
                     {
                         "from": u,
                         "to": v,
-                        "lengthM": round(length, 2),
                         "walkSec": round(length / WALK_SPEED, 2),
-                        "waitSec": round(wait, 2),
-                        "isSignal": wait > 0,
+                        "cycleSec": round(cycle, 1),
+                        "isSignal": ped_crossing,
                     }
                 )
-    print(f"  edges={len(edges_out)}", flush=True)
+                if ped_crossing:
+                    ped_edge_count += 1
+    print(f"  edges={len(edges_out)} pedCrossingEdges={ped_edge_count}", flush=True)
 
     signals_out = []
-    for osm_id in signal_osm_ids:
+    for osm_id in ped_signal_ids:
         n = nodes_raw[osm_id]
         if haversine_m(ORIGIN["lat"], ORIGIN["lng"], n["lat"], n["lng"]) <= MAX_RADIUS_M:
             signals_out.append([round(n["lat"], 6), round(n["lng"], 6)])
 
-    # Compact arrays to keep download size down
     nodes_compact = [
         [n["id"], round(n["lat"], 6), round(n["lng"], 6)] for n in nodes_out
     ]
@@ -412,18 +454,19 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
             e["from"],
             e["to"],
             e["walkSec"],
-            e["waitSec"],
+            e["cycleSec"],
             1 if e["isSignal"] else 0,
         ]
         for e in edges_out
     ]
 
     return {
-        "v": 1,
+        "v": 2,
         "origin": ORIGIN,
         "maxRadiusM": MAX_RADIUS_M,
         "walkSpeedMps": WALK_SPEED,
         "defaultCycleSec": round(float(default_cycle), 1),
+        "defaultPedGreenSec": DEFAULT_PED_GREEN,
         "defaultWaitSec": round(default_wait, 2),
         "jarticCycleCount": len(cycles),
         "nodes": nodes_compact,
