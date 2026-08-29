@@ -90,26 +90,133 @@ body {
 
 .mapboxgl-popup-content {
   font-family: var(--font);
-  font-size: 13px;
-  line-height: 1.4;
-  padding: 8px 10px;
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  color: var(--label);
+  background: var(--sheet);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-radius: 16px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.12);
+  padding: 14px 16px 16px;
+}
+
+.signal-popup .mapboxgl-popup-tip {
+  display: none;
 }
 
 .signal-popup .mapboxgl-popup-content {
-  min-width: 168px;
+  min-width: 228px;
+  padding: 16px 16px 14px;
 }
 
-.signal-popup-title {
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.signal-popup-meta {
-  margin-top: 4px;
+.signal-popup .mapboxgl-popup-close-button {
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--fill);
   color: var(--secondary-label);
-  font-size: 12px;
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 28px;
+  text-align: center;
+}
+
+.signal-popup .mapboxgl-popup-close-button:hover,
+.signal-popup .mapboxgl-popup-close-button:focus-visible {
+  color: var(--label);
+}
+
+.signal-card-header {
+  padding-right: 36px;
+  margin-bottom: 2px;
+}
+
+.signal-card-eyebrow {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--secondary-label);
+}
+
+.signal-card-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  line-height: 1.2;
+}
+
+.signal-card-status {
+  margin: 4px 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.signal-card-status.go,
+.signal-card-dot.go {
+  color: var(--system-green);
+}
+
+.signal-card-status.wait,
+.signal-card-dot.wait {
+  color: var(--system-red);
+}
+
+.signal-card-rows {
+  list-style: none;
+  background: var(--sheet-solid);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.signal-card-rows li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 15px;
+  border-bottom: 0.5px solid var(--separator);
+}
+
+.signal-card-rows li:last-child {
+  border-bottom: none;
+}
+
+.signal-card-rows span {
+  color: var(--label);
+}
+
+.signal-card-rows strong {
+  color: var(--secondary-label);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.signal-card-live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+}
+
+.signal-card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.signal-card-meta {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--secondary-label);
 }
 
 .signal-pin {
@@ -301,25 +408,28 @@ h1 {
 }
 
 .timeline {
-  list-style: none;
-  display: grid;
-  gap: 8px;
   margin: 0 0 12px;
 }
 
-.timeline li {
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: var(--sheet-solid);
+.timeline > li {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-height: 0;
+  padding: 12px 16px;
 }
 
-.timeline li[role="button"] {
+.timeline > li.is-selected {
+  background: var(--fill);
+}
+
+.timeline > li[role="button"] {
   cursor: pointer;
 }
 
-.timeline li[role="button"]:focus-visible {
+.timeline > li[role="button"]:focus-visible {
   outline: 2px solid var(--system-blue);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 
 .timeline-head {
@@ -327,17 +437,11 @@ h1 {
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 6px;
-}
-
-.timeline-head .badge {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--system-blue);
+  font-size: 17px;
 }
 
 .timeline-head .state {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -351,7 +455,7 @@ h1 {
 
 .timeline-body {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   font-size: 13px;
   line-height: 1.35;
   color: var(--secondary-label);
