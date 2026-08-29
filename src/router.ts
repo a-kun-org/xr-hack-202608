@@ -13,6 +13,8 @@ export type GraphEdge = {
   walkSec: number;
   cycleSec: number;
   isSignal: boolean;
+  /** OSM crossing way group; same id = one crossing (multi-segment). */
+  crossingId: number;
 };
 
 export type GraphData = {
@@ -43,7 +45,8 @@ type RawGraph = {
   nodes: GraphNode[] | [number, number, number][];
   edges:
     | GraphEdge[]
-    | [number, number, number, number, number][];
+    | [number, number, number, number, number][]
+    | [number, number, number, number, number, number][];
   signals: LatLng[] | [number, number][];
   hubs?: [number, number, number][] | { lat: number; lng: number; cycleSec: number }[];
 };
@@ -82,16 +85,22 @@ export function normalizeGraph(raw: RawGraph): GraphData {
   });
   const edges: GraphEdge[] = raw.edges.map((e) => {
     if (Array.isArray(e)) {
+      const crossingId =
+        e.length >= 6 ? Number(e[5] ?? 0) : e[4] === 1 ? 1 : 0;
       return {
         from: e[0],
         to: e[1],
         lengthM: 0,
         walkSec: e[2],
         cycleSec: e[3],
-        isSignal: e[4] === 1,
+        isSignal: e[4] === 1 || crossingId > 0,
+        crossingId,
       };
     }
-    return e;
+    return {
+      ...e,
+      crossingId: e.crossingId ?? (e.isSignal ? 1 : 0),
+    };
   });
   const signals: LatLng[] = raw.signals.map((s) => {
     if (Array.isArray(s)) return { lat: s[0], lng: s[1] };
@@ -197,7 +206,13 @@ export function snapToNode(
   return bestId;
 }
 
-type Adj = { to: number; walkSec: number; cycleSec: number; isSignal: boolean };
+type Adj = {
+  to: number;
+  walkSec: number;
+  cycleSec: number;
+  isSignal: boolean;
+  crossingId: number;
+};
 
 function buildAdj(graph: GraphData): Map<number, Adj[]> {
   const adj = new Map<number, Adj[]>();
@@ -208,6 +223,7 @@ function buildAdj(graph: GraphData): Map<number, Adj[]> {
       walkSec: e.walkSec,
       cycleSec: e.cycleSec,
       isSignal: e.isSignal,
+      crossingId: e.crossingId,
     });
     adj.set(e.from, a);
   }
@@ -242,8 +258,8 @@ export function findRoute(
   const prev = new Map<number, number>();
   const walkAcc = new Map<number, number>();
   const waitAcc = new Map<number, number>();
-  /** Last charged signal position along the best path to this node. */
-  const lastSigAt = new Map<number, LatLng | null>();
+  /** Last crossing id charged on the best path to this node (0 = none). */
+  const lastCrossing = new Map<number, number>();
 
   type Item = { id: number; cost: number };
   const heap: Item[] = [];
@@ -280,7 +296,7 @@ export function findRoute(
   dist.set(startId, 0);
   walkAcc.set(startId, 0);
   waitAcc.set(startId, 0);
-  lastSigAt.set(startId, null);
+  lastCrossing.set(startId, 0);
   push({ id: startId, cost: 0 });
 
   while (heap.length > 0) {
@@ -289,22 +305,13 @@ export function findRoute(
     if (cur.cost > d) continue;
     if (cur.id === endId) break;
 
-    const fromNode = nodeById.get(cur.id)!;
     for (const edge of adj.get(cur.id) ?? []) {
-      const toNode = nodeById.get(edge.to)!;
-      const mid = {
-        lat: (fromNode.lat + toNode.lat) / 2,
-        lng: (fromNode.lng + toNode.lng) / 2,
-      };
-
       let wait = 0;
-      let chargedHere: LatLng | null = lastSigAt.get(cur.id) ?? null;
-      // 横断歩道エッジのみ待つ（交差点脇の歩道では待たない）
-      if (edge.isSignal) {
-        const prevAt = lastSigAt.get(cur.id);
-        const fresh =
-          !prevAt || haversineM(prevAt, mid) > graph.signalClusterM;
-        if (fresh) {
+      let chargedId = lastCrossing.get(cur.id) ?? 0;
+      // 同一横断ウェイの連続セグメントは1回だけ待つ。
+      // 二段階横断の別ウェイは別 ID なので別待ちになる。
+      if (edge.isSignal && edge.crossingId > 0) {
+        if (chargedId !== edge.crossingId) {
           const timing = timingFor(
             edge.to,
             edge.cycleSec,
@@ -312,7 +319,7 @@ export function findRoute(
             graph.defaultPedGreenSec
           );
           wait = waitIfRed(departAt + d, timing);
-          chargedHere = mid;
+          chargedId = edge.crossingId;
         }
       }
 
@@ -321,7 +328,7 @@ export function findRoute(
         dist.set(edge.to, nd);
         walkAcc.set(edge.to, (walkAcc.get(cur.id) ?? 0) + edge.walkSec);
         waitAcc.set(edge.to, (waitAcc.get(cur.id) ?? 0) + wait);
-        lastSigAt.set(edge.to, chargedHere);
+        lastCrossing.set(edge.to, chargedId);
         prev.set(edge.to, cur.id);
         push({ id: edge.to, cost: nd });
       }
@@ -352,22 +359,14 @@ export function findRoute(
 
   const signalStops: SignalStop[] = [];
   let signalIndex = 0;
-  let lastStopAt: LatLng | null = null;
+  let lastStopCrossing = 0;
   for (let i = 1; i < ids.length; i++) {
     const from = ids[i - 1];
     const to = ids[i];
     const edge = (adj.get(from) ?? []).find((e) => e.to === to);
-    if (!edge?.isSignal) continue;
-    const fromNode = nodeById.get(from)!;
-    const toNode = nodeById.get(to)!;
-    const mid = {
-      lat: (fromNode.lat + toNode.lat) / 2,
-      lng: (fromNode.lng + toNode.lng) / 2,
-    };
-    if (lastStopAt && haversineM(lastStopAt, mid) <= graph.signalClusterM) {
-      continue;
-    }
-    lastStopAt = mid;
+    if (!edge?.isSignal || edge.crossingId <= 0) continue;
+    if (edge.crossingId === lastStopCrossing) continue;
+    lastStopCrossing = edge.crossingId;
     signalIndex += 1;
     const timing = timingFor(
       to,
@@ -377,6 +376,7 @@ export function findRoute(
     );
     const atNear = dist.get(from) ?? 0;
     const waitSec = nodeWait[i] ?? waitIfRed(departAt + atNear, timing);
+    const fromNode = nodeById.get(from)!;
     signalStops.push({
       index: signalIndex,
       lat: fromNode.lat,

@@ -60,8 +60,16 @@ def route(graph: dict, start, end):
     nodes = {n[0]: (n[1], n[2]) for n in graph["nodes"]}
     adj = defaultdict(list)
     for e in graph["edges"]:
-        adj[e[0]].append({"to": e[1], "walk": e[2], "cycle": e[3], "sig": e[4] == 1})
-    cluster_m = float(graph.get("signalClusterM", 40))
+        cid = e[5] if len(e) >= 6 else (1 if e[4] == 1 else 0)
+        adj[e[0]].append(
+            {
+                "to": e[1],
+                "walk": e[2],
+                "cycle": e[3],
+                "sig": e[4] == 1 or cid > 0,
+                "cid": cid,
+            }
+        )
 
     def snap(p, maxd=120):
         best, bd = None, maxd
@@ -78,7 +86,7 @@ def route(graph: dict, start, end):
 
     dist = {s: 0.0}
     prev: dict[int, int] = {}
-    last_sig: dict[int, tuple[float, float] | None] = {s: None}
+    last_cid: dict[int, int] = {s: 0}
     pq = [(0.0, s)]
     while pq:
         d, u = heapq.heappop(pq)
@@ -86,26 +94,20 @@ def route(graph: dict, start, end):
             continue
         if u == e:
             break
-        ula, uln = nodes[u]
         for edge in adj[u]:
             v = edge["to"]
-            vla, vln = nodes[v]
-            mid = ((ula + vla) / 2, (uln + vln) / 2)
             wait = 0.0
-            charged = last_sig[u]
-            if edge["sig"]:
-                prev_at = last_sig[u]
-                fresh = prev_at is None or hav(prev_at, mid) > cluster_m
-                if fresh:
-                    cy, gr, off = timing_for(v, edge["cycle"])
-                    phase = (d + off) % cy
-                    wait = 0.0 if phase < gr else cy - phase
-                    charged = mid
+            charged = last_cid[u]
+            if edge["sig"] and edge["cid"] > 0 and charged != edge["cid"]:
+                cy, gr, off = timing_for(v, edge["cycle"])
+                phase = (d + off) % cy
+                wait = 0.0 if phase < gr else cy - phase
+                charged = edge["cid"]
             nd = d + wait + edge["walk"]
             if nd < dist.get(v, 1e18):
                 dist[v] = nd
                 prev[v] = u
-                last_sig[v] = charged
+                last_cid[v] = charged
                 heapq.heappush(pq, (nd, v))
 
     if e not in dist:
@@ -121,19 +123,18 @@ def route(graph: dict, start, end):
     ids.reverse()
 
     sig_pts = []
-    last_stop = None
-    false_sidewalk = 0
+    last_stop_cid = 0
     for a, b in zip(ids, ids[1:]):
         edge = next(x for x in adj[a] if x["to"] == b)
-        if not edge["sig"]:
+        if not edge["sig"] or edge["cid"] <= 0:
             continue
+        if edge["cid"] == last_stop_cid:
+            continue
+        last_stop_cid = edge["cid"]
         mid = (
             (nodes[a][0] + nodes[b][0]) / 2,
             (nodes[a][1] + nodes[b][1]) / 2,
         )
-        if last_stop and hav(last_stop, mid) <= cluster_m:
-            continue
-        last_stop = mid
         sig_pts.append(mid)
 
     return {

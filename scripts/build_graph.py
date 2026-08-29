@@ -424,7 +424,8 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
 
     edge_map: dict[tuple[int, int], dict] = {}
     ped_edge_count = 0
-    # 信号横断の中心（同一交差点の待ちまとめ用。待ち判定自体には使わない）
+    next_crossing_id = 0
+    # 信号横断の中心（表示・デバッグ用）
     crossing_hubs: list[tuple[float, float, float]] = []
     for way in ways:
         tags = way.get("tags", {})
@@ -442,13 +443,16 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
             mid_lat = (na["lat"] + nb["lat"]) / 2
             mid_lng = (na["lng"] + nb["lng"]) / 2
             segs.append((ia, ib, length, mid_lat, mid_lng))
+        crossing_id = 0
         if ped_crossing and segs:
+            next_crossing_id += 1
+            crossing_id = next_crossing_id
             mid_lat = sum(s[3] for s in segs) / len(segs)
             mid_lng = sum(s[4] for s in segs) / len(segs)
             crossing_hubs.append((mid_lat, mid_lng, cycle_near(mid_lat, mid_lng)))
-        # 横断ウェイの全セグメントを信号扱い（歩道の並行辺には付けない）
+        # 横断ウェイの全セグメントを同じ crossingId で信号扱い
         for ia, ib, length, mid_lat, mid_lng in segs:
-            is_sig = ped_crossing
+            is_sig = crossing_id > 0
             cycle = cycle_near(mid_lat, mid_lng) if is_sig else 0.0
             walk = round(length / WALK_SPEED, 2)
             for u, v in ((ia, ib), (ib, ia)):
@@ -461,17 +465,19 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
                         "walkSec": walk,
                         "cycleSec": round(cycle, 1),
                         "isSignal": is_sig,
+                        "crossingId": crossing_id,
                     }
                     if is_sig:
                         ped_edge_count += 1
                 elif is_sig and not prev["isSignal"]:
                     prev["isSignal"] = True
                     prev["cycleSec"] = round(cycle, 1)
+                    prev["crossingId"] = crossing_id
                     ped_edge_count += 1
 
     print(
         f"  edges={len(edge_map)} pedCrossingEdges={ped_edge_count} "
-        f"hubs={len(crossing_hubs)}",
+        f"crossings={next_crossing_id} hubs={len(crossing_hubs)}",
         flush=True,
     )
 
@@ -512,12 +518,13 @@ def build_graph(osm: dict, cycles: dict[str, float], locations: list[dict]) -> d
             e["walkSec"],
             e["cycleSec"],
             1 if e["isSignal"] else 0,
+            int(e.get("crossingId", 0)),
         ]
         for e in edges_out
     ]
 
     return {
-        "v": 3,
+        "v": 4,
         "origin": ORIGIN,
         "maxRadiusM": MAX_RADIUS_M,
         "walkSpeedMps": WALK_SPEED,
