@@ -20,6 +20,9 @@ const REFRESH_MS = 12000;
 
 const mapEl = document.getElementById("map")!;
 const destLabel = document.getElementById("dest-label")!;
+const originLabel = document.getElementById("origin-label")!;
+const modeOriginBtn = document.getElementById("mode-origin") as HTMLButtonElement;
+const modeDestBtn = document.getElementById("mode-dest") as HTMLButtonElement;
 const statusEl = document.getElementById("status")!;
 const searchBtn = document.getElementById("search-btn") as HTMLButtonElement;
 const resultEl = document.getElementById("result")!;
@@ -57,14 +60,16 @@ const walkerIcon = L.divIcon({
   iconAnchor: [8, 8],
 });
 
-L.marker([SAPPORO_STATION.lat, SAPPORO_STATION.lng], {
+let originMarker = L.marker([SAPPORO_STATION.lat, SAPPORO_STATION.lng], {
   icon: originIcon,
-  title: "札幌駅",
+  title: "起点",
 }).addTo(map);
 
 let graph: GraphData | null = null;
+let origin: LatLng = { ...SAPPORO_STATION };
 let dest: LatLng | null = null;
 let destMarker: L.Marker | null = null;
+let tapMode: "origin" | "dest" = "dest";
 let routeLine: L.Polyline | null = null;
 let walkerMarker: L.Marker | null = null;
 let routeSignals: L.CircleMarker[] = [];
@@ -166,10 +171,26 @@ function showResult(result: RouteResult, fitted: boolean) {
   resultEl.hidden = false;
 }
 
+function updateSearchEnabled() {
+  searchBtn.disabled = dest === null;
+}
+
+function setTapMode(mode: "origin" | "dest", announce = true) {
+  tapMode = mode;
+  modeOriginBtn.classList.toggle("active", mode === "origin");
+  modeDestBtn.classList.toggle("active", mode === "dest");
+  if (!announce) return;
+  setStatus(
+    mode === "origin"
+      ? "地図をタップして起点を指定してください"
+      : "地図をタップして終点を指定してください"
+  );
+}
+
 function searchRoute(silent = false) {
   if (!graph || !dest) return;
 
-  const startId = snapToNode(graph, graph.origin, 120);
+  const startId = snapToNode(graph, origin, 80);
   const endId = snapToNode(graph, dest, 80);
   if (startId === null) {
     setStatus("起点を道路ネットワークに接続できませんでした", true);
@@ -232,16 +253,31 @@ map.on("click", (e) => {
     return;
   }
 
+  if (tapMode === "origin") {
+    origin = p;
+    originLabel.textContent = fmtCoord(p);
+    originMarker.setLatLng([p.lat, p.lng]);
+    resultEl.hidden = true;
+    clearRoute();
+    updateSearchEnabled();
+    setTapMode("dest", false);
+    setStatus("起点を設定しました。続けて終点を指定できます");
+    return;
+  }
+
   dest = p;
   destLabel.textContent = fmtCoord(p);
   if (destMarker) destMarker.setLatLng([p.lat, p.lng]);
   else destMarker = L.marker([p.lat, p.lng], { icon: destIcon }).addTo(map);
 
-  searchBtn.disabled = false;
+  updateSearchEnabled();
   resultEl.hidden = true;
   clearRoute();
   setStatus("終点を設定しました。「いま出発で検索」を押してください");
 });
+
+modeOriginBtn.addEventListener("click", () => setTapMode("origin"));
+modeDestBtn.addEventListener("click", () => setTapMode("dest"));
 
 searchBtn.addEventListener("click", () => {
   searchRoute(false);

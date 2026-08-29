@@ -97,6 +97,31 @@ h1 {
   line-height: 1.55;
 }
 
+.tap-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+
+.mode-btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.55rem 0.4rem;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.mode-btn.active {
+  color: #06140d;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 .meta {
   display: grid;
   gap: 0.65rem;

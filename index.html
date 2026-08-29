@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>札幌駅発・信号待ち込み最速徒歩ルート</title>
+    <title>信号待ち込み最速徒歩ルート</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -24,10 +24,14 @@
         <p class="lead">
           いま出発した場合の到着時刻で信号の青／赤を仮定し、待ち込みの所要時間が最短の徒歩ルートを出します。
         </p>
+        <div class="tap-mode" role="group" aria-label="地図タップの対象">
+          <button type="button" id="mode-origin" class="mode-btn">起点を指定</button>
+          <button type="button" id="mode-dest" class="mode-btn active">終点を指定</button>
+        </div>
         <dl class="meta">
           <div>
             <dt>起点</dt>
-            <dd>札幌駅</dd>
+            <dd id="origin-label">札幌駅</dd>
           </div>
           <div>
             <dt>終点</dt>
