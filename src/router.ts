@@ -21,9 +21,13 @@ export type GraphData = {
   walkSpeedMps: number;
   defaultCycleSec: number;
   defaultPedGreenSec: number;
+  signalClusterM: number;
+  promoteSignalM: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
   signals: LatLng[];
+  /** Signalized crossing hubs: [lat, lng, cycleSec] */
+  hubs: { lat: number; lng: number; cycleSec: number }[];
 };
 
 /** Wire format from build_graph.py (compact arrays). */
@@ -34,11 +38,14 @@ type RawGraph = {
   walkSpeedMps: number;
   defaultCycleSec?: number;
   defaultPedGreenSec?: number;
+  signalClusterM?: number;
+  promoteSignalM?: number;
   nodes: GraphNode[] | [number, number, number][];
   edges:
     | GraphEdge[]
     | [number, number, number, number, number][];
   signals: LatLng[] | [number, number][];
+  hubs?: [number, number, number][] | { lat: number; lng: number; cycleSec: number }[];
 };
 
 export type SignalStop = {
@@ -90,15 +97,22 @@ export function normalizeGraph(raw: RawGraph): GraphData {
     if (Array.isArray(s)) return { lat: s[0], lng: s[1] };
     return s;
   });
+  const hubs = (raw.hubs ?? []).map((h) => {
+    if (Array.isArray(h)) return { lat: h[0], lng: h[1], cycleSec: h[2] };
+    return h;
+  });
   return {
     origin: raw.origin,
     maxRadiusM: raw.maxRadiusM,
     walkSpeedMps: raw.walkSpeedMps,
     defaultCycleSec: raw.defaultCycleSec ?? 125,
     defaultPedGreenSec: raw.defaultPedGreenSec ?? 15,
+    signalClusterM: raw.signalClusterM ?? 40,
+    promoteSignalM: raw.promoteSignalM ?? 18,
     nodes,
     edges,
     signals,
+    hubs,
   };
 }
 
@@ -200,6 +214,49 @@ function buildAdj(graph: GraphData): Map<number, Adj[]> {
   return adj;
 }
 
+type HubHit = { cycleSec: number; lat: number; lng: number };
+
+function buildHubGrid(
+  hubs: GraphData["hubs"],
+  cell = 0.00015
+): Map<string, GraphData["hubs"]> {
+  const grid = new Map<string, GraphData["hubs"]>();
+  for (const h of hubs) {
+    const key = `${Math.floor(h.lat / cell)},${Math.floor(h.lng / cell)}`;
+    const bucket = grid.get(key) ?? [];
+    bucket.push(h);
+    grid.set(key, bucket);
+  }
+  return grid;
+}
+
+/** Nearest signalized-crossing hub within promote radius, if any. */
+function hubNear(
+  mid: LatLng,
+  hubGrid: Map<string, GraphData["hubs"]>,
+  maxM: number,
+  cell = 0.00015
+): HubHit | null {
+  const i0 = Math.floor(mid.lat / cell);
+  const j0 = Math.floor(mid.lng / cell);
+  let best: HubHit | null = null;
+  let bestD = maxM;
+  for (let di = -1; di <= 1; di++) {
+    for (let dj = -1; dj <= 1; dj++) {
+      const bucket = hubGrid.get(`${i0 + di},${j0 + dj}`);
+      if (!bucket) continue;
+      for (const h of bucket) {
+        const d = haversineM(mid, h);
+        if (d <= bestD) {
+          bestD = d;
+          best = { cycleSec: h.cycleSec, lat: h.lat, lng: h.lng };
+        }
+      }
+    }
+  }
+  return best;
+}
+
 /** Time-dependent Dijkstra: wait is remaining red at arrival, not average. */
 export function findRoute(
   graph: GraphData,
@@ -223,12 +280,14 @@ export function findRoute(
   }
 
   const adj = buildAdj(graph);
+  const hubGrid = buildHubGrid(graph.hubs);
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   const dist = new Map<number, number>();
   const prev = new Map<number, number>();
   const walkAcc = new Map<number, number>();
   const waitAcc = new Map<number, number>();
-  const sigAcc = new Map<number, number>();
+  /** Last charged signal hub position along the best path to this node. */
+  const lastSigAt = new Map<number, LatLng | null>();
 
   type Item = { id: number; cost: number };
   const heap: Item[] = [];
@@ -265,7 +324,7 @@ export function findRoute(
   dist.set(startId, 0);
   walkAcc.set(startId, 0);
   waitAcc.set(startId, 0);
-  sigAcc.set(startId, 0);
+  lastSigAt.set(startId, null);
   push({ id: startId, cost: 0 });
 
   while (heap.length > 0) {
@@ -274,27 +333,44 @@ export function findRoute(
     if (cur.cost > d) continue;
     if (cur.id === endId) break;
 
+    const fromNode = nodeById.get(cur.id)!;
     for (const edge of adj.get(cur.id) ?? []) {
-      // 歩行者信号は横断前に待つ（赤のまま渡らない）
+      const toNode = nodeById.get(edge.to)!;
+      const mid = {
+        lat: (fromNode.lat + toNode.lat) / 2,
+        lng: (fromNode.lng + toNode.lng) / 2,
+      };
+      const hub = hubNear(mid, hubGrid, graph.promoteSignalM);
+      const isSig = edge.isSignal || hub !== null;
+      const cycleSec = edge.isSignal
+        ? edge.cycleSec
+        : hub?.cycleSec ?? edge.cycleSec;
+
       let wait = 0;
-      if (edge.isSignal) {
-        const timing = timingFor(
-          edge.to,
-          edge.cycleSec,
-          graph.defaultCycleSec,
-          graph.defaultPedGreenSec
-        );
-        wait = waitIfRed(departAt + d, timing);
+      let chargedHere: LatLng | null = lastSigAt.get(cur.id) ?? null;
+      if (isSig) {
+        const anchor = hub ?? mid;
+        const prevAt = lastSigAt.get(cur.id);
+        const fresh =
+          !prevAt || haversineM(prevAt, anchor) > graph.signalClusterM;
+        if (fresh) {
+          const timing = timingFor(
+            edge.to,
+            cycleSec,
+            graph.defaultCycleSec,
+            graph.defaultPedGreenSec
+          );
+          wait = waitIfRed(departAt + d, timing);
+          chargedHere = anchor;
+        }
       }
+
       const nd = d + wait + edge.walkSec;
       if (nd < (dist.get(edge.to) ?? Infinity)) {
         dist.set(edge.to, nd);
         walkAcc.set(edge.to, (walkAcc.get(cur.id) ?? 0) + edge.walkSec);
         waitAcc.set(edge.to, (waitAcc.get(cur.id) ?? 0) + wait);
-        sigAcc.set(
-          edge.to,
-          (sigAcc.get(cur.id) ?? 0) + (edge.isSignal ? 1 : 0)
-        );
+        lastSigAt.set(edge.to, chargedHere);
         prev.set(edge.to, cur.id);
         push({ id: edge.to, cost: nd });
       }
@@ -324,30 +400,43 @@ export function findRoute(
   });
 
   const signalStops: SignalStop[] = [];
-  const seenStop = new Set<string>();
   let signalIndex = 0;
+  let lastStopAt: LatLng | null = null;
   for (let i = 1; i < ids.length; i++) {
     const from = ids[i - 1];
     const to = ids[i];
     const edge = (adj.get(from) ?? []).find((e) => e.to === to);
-    if (!edge?.isSignal) continue;
-    const key = `${from}-${to}`;
-    if (seenStop.has(key)) continue;
-    seenStop.add(key);
+    if (!edge) continue;
+    const fromNode = nodeById.get(from)!;
+    const toNode = nodeById.get(to)!;
+    const mid = {
+      lat: (fromNode.lat + toNode.lat) / 2,
+      lng: (fromNode.lng + toNode.lng) / 2,
+    };
+    const hub = hubNear(mid, hubGrid, graph.promoteSignalM);
+    const isSig = edge.isSignal || hub !== null;
+    if (!isSig) continue;
+    const anchor = hub ?? mid;
+    if (lastStopAt && haversineM(lastStopAt, anchor) <= graph.signalClusterM) {
+      continue;
+    }
+    lastStopAt = anchor;
     signalIndex += 1;
+    const cycleSec = edge.isSignal
+      ? edge.cycleSec
+      : hub?.cycleSec ?? edge.cycleSec;
     const timing = timingFor(
       to,
-      edge.cycleSec,
+      cycleSec,
       graph.defaultCycleSec,
       graph.defaultPedGreenSec
     );
     const atNear = dist.get(from) ?? 0;
     const waitSec = nodeWait[i] ?? waitIfRed(departAt + atNear, timing);
-    const n = nodeById.get(from)!;
     signalStops.push({
       index: signalIndex,
-      lat: n.lat,
-      lng: n.lng,
+      lat: fromNode.lat,
+      lng: fromNode.lng,
       arriveAt: departAt + atNear,
       waitSec,
       crossAt: departAt + atNear + waitSec,
@@ -363,7 +452,7 @@ export function findRoute(
     totalSec: dist.get(endId)!,
     walkSec: walkAcc.get(endId)!,
     waitSec: waitAcc.get(endId)!,
-    signalCount: sigAcc.get(endId)!,
+    signalCount: signalStops.length,
     departAt,
     signalStops,
   };

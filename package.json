@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "build:graph": "python3 scripts/build_graph.py"
+    "build:graph": "python3 scripts/build_graph.py",
+    "verify:court": "python3 scripts/verify_court_route.py"
   },
   "repository": {
     "type": "git",
