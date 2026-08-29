@@ -102,6 +102,9 @@ export function normalizeGraph(raw: RawGraph): GraphData {
       crossingId: e.crossingId ?? (e.isSignal ? 1 : 0),
     };
   });
+  edges.push(
+    ...stitchNearbyNodes(nodes, edges, raw.walkSpeedMps ?? 1.2)
+  );
   const signals: LatLng[] = raw.signals.map((s) => {
     if (Array.isArray(s)) return { lat: s[0], lng: s[1] };
     return s;
@@ -182,6 +185,73 @@ function haversineM(a: LatLng, b: LatLng): number {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** OSM の交差点角で歩道が数十cm切れていると、直進横断のあと街区を一周する。 */
+export const STITCH_NEARBY_M = 1.5;
+
+function stitchNearbyNodes(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  walkSpeedMps: number
+): GraphEdge[] {
+  const existing = new Set<string>();
+  for (const e of edges) {
+    existing.add(`${e.from},${e.to}`);
+  }
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const cell = 0.00002;
+  const grid = new Map<string, number[]>();
+  for (const n of nodes) {
+    const key = `${Math.floor(n.lat / cell)},${Math.floor(n.lng / cell)}`;
+    const bucket = grid.get(key);
+    if (bucket) bucket.push(n.id);
+    else grid.set(key, [n.id]);
+  }
+
+  const extra: GraphEdge[] = [];
+  for (const n of nodes) {
+    const ci = Math.floor(n.lat / cell);
+    const cj = Math.floor(n.lng / cell);
+    for (let di = -1; di <= 1; di++) {
+      for (let dj = -1; dj <= 1; dj++) {
+        for (const oid of grid.get(`${ci + di},${cj + dj}`) ?? []) {
+          if (oid <= n.id) continue;
+          if (existing.has(`${n.id},${oid}`) || existing.has(`${oid},${n.id}`)) {
+            continue;
+          }
+          const other = byId.get(oid);
+          if (!other) continue;
+          const lengthM = haversineM(n, other);
+          if (lengthM < 0.15 || lengthM > STITCH_NEARBY_M) continue;
+          const walkSec = Math.round((lengthM / walkSpeedMps) * 100) / 100;
+          extra.push(
+            {
+              from: n.id,
+              to: oid,
+              lengthM,
+              walkSec,
+              cycleSec: 0,
+              isSignal: false,
+              crossingId: 0,
+            },
+            {
+              from: oid,
+              to: n.id,
+              lengthM,
+              walkSec,
+              cycleSec: 0,
+              isSignal: false,
+              crossingId: 0,
+            }
+          );
+          existing.add(`${n.id},${oid}`);
+          existing.add(`${oid},${n.id}`);
+        }
+      }
+    }
+  }
+  return extra;
 }
 
 export function distanceFromOriginM(p: LatLng, origin: LatLng): number {

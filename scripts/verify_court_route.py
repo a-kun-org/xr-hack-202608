@@ -10,6 +10,9 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from build_graph import stitch_compact_graph
+
 STATION = (43.0687, 141.3508)
 COURT = (43.05983, 141.34008)
 # 経路が横断ウェイ上にあるとみなす距離
@@ -151,6 +154,7 @@ def route(graph: dict, start, end):
 
 def main() -> int:
     graph = json.loads((ROOT / "public/data/graph.json").read_text())
+    stitch_compact_graph(graph)
     osm = json.loads((ROOT / "scripts/.cache/osm_sapporo.json").read_text())
     result = route(graph, STATION, COURT)
 
