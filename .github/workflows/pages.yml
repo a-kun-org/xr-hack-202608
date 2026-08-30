@@ -26,6 +26,8 @@ jobs:
       - run: npm ci
       # 公開トークンは .env.production を使う（空の Actions secret で上書きしない）
       - run: npm run build
+        env:
+          VITE_BASE: /xr-hack-202608/
       - run: touch dist/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
