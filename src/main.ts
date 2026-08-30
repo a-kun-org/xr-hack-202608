@@ -25,7 +25,6 @@ import {
 import { formatCoord, reverseGeocode } from "./geocode";
 
 const SAPPORO_STATION: LatLng = { lat: 43.0687, lng: 141.3508 };
-const REFRESH_MS = 12000;
 const TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? "";
 const TOKEN_ERROR =
   "Mapbox のアクセストークンが未設定です。VITE_MAPBOX_ACCESS_TOKEN を設定してください。";
@@ -297,7 +296,6 @@ let tapMode: TapMode = "dest";
 let walkerMarker: Marker | null = null;
 let routeSignals: SignalPin[] = [];
 let lastResult: RouteResult | null = null;
-let refreshTimer: number | null = null;
 let originLookup = 0;
 let destLookup = 0;
 
@@ -639,8 +637,7 @@ function applyQueryRoute() {
   if (o) placeOrigin(o);
   if (d) placeDest(d);
   if (o && d) {
-    searchRoute(false);
-    scheduleRefresh();
+    searchRoute();
   }
 }
 
@@ -665,7 +662,7 @@ function setTapMode(mode: TapMode, announce = true) {
   setStatus("地図をタップして終点を指定してください");
 }
 
-function searchRoute(silent = false) {
+function searchRoute() {
   if (!graph || !dest) return;
 
   const startId = snapToNode(graph, origin, 80);
@@ -679,28 +676,19 @@ function searchRoute(silent = false) {
     return;
   }
 
-  if (!silent) setStatus("いまの時刻で経路を計算中…");
+  setStatus("いまの時刻で経路を計算中…");
   const result = findRoute(graph, startId, endId, Date.now() / 1000);
   if (!result) {
     setStatus("経路が見つかりませんでした", true);
     return;
   }
 
-  showResult(result, !silent);
+  showResult(result, true);
   setStatus(
-    silent
-      ? `${formatClock()} 時点でルートを更新しました`
-      : result.signalStops.length > 0
-        ? "交差点をタップすると通過情報を表示します。地点を変えるときは「起点」または「終点」を押してください"
-        : "いま出発する場合のルートです（約12秒ごとに再計算）"
+    result.signalStops.length > 0
+      ? "交差点をタップすると通過情報を表示します。地点を変えるときは「起点」または「終点」を押してください"
+      : "いま出発する場合のルートです"
   );
-}
-
-function scheduleRefresh() {
-  if (refreshTimer !== null) window.clearInterval(refreshTimer);
-  refreshTimer = window.setInterval(() => {
-    if (dest && graph) searchRoute(true);
-  }, REFRESH_MS);
 }
 
 async function loadGraph(): Promise<void> {
@@ -827,8 +815,7 @@ modeInspectBtn.addEventListener("click", () => {
 });
 
 searchBtn.addEventListener("click", () => {
-  searchRoute(false);
-  scheduleRefresh();
+  searchRoute();
 });
 
 void showAddress(originLabel, origin, ++originLookup, () => originLookup);
