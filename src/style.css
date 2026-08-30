@@ -397,6 +397,39 @@ h1 {
   cursor: not-allowed;
 }
 
+#save-btn {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 50px;
+  margin-top: 10px;
+  border: none;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--label);
+  background: var(--fill);
+  cursor: pointer;
+}
+
+#save-btn:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+
+#save-btn:active:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+#save-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+#save-btn[hidden] {
+  display: none;
+}
+
 .result {
   margin-top: 20px;
 }

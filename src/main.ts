@@ -25,6 +25,7 @@ import {
 import { formatCoord, reverseGeocode } from "./geocode";
 
 const SAPPORO_STATION: LatLng = { lat: 43.0687, lng: 141.3508 };
+const REFRESH_MS = 12000;
 const TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? "";
 const TOKEN_ERROR =
   "Mapbox のアクセストークンが未設定です。VITE_MAPBOX_ACCESS_TOKEN を設定してください。";
@@ -37,6 +38,7 @@ const modeDestBtn = document.getElementById("mode-dest") as HTMLButtonElement;
 const modeInspectBtn = document.getElementById("mode-inspect") as HTMLButtonElement;
 const statusEl = document.getElementById("status")!;
 const searchBtn = document.getElementById("search-btn") as HTMLButtonElement;
+const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
 const resultEl = document.getElementById("result")!;
 const sheetEl = document.getElementById("sheet")!;
 const sheetHandle = document.getElementById("sheet-handle")!;
@@ -296,6 +298,7 @@ let tapMode: TapMode = "dest";
 let walkerMarker: Marker | null = null;
 let routeSignals: SignalPin[] = [];
 let lastResult: RouteResult | null = null;
+let refreshTimer: number | null = null;
 let originLookup = 0;
 let destLookup = 0;
 
@@ -456,6 +459,8 @@ function clearRoute() {
   }
   routeSignals = [];
   lastResult = null;
+  stopRefresh();
+  hideSaveBtn();
   updateInspectEnabled();
   if (tapMode === "inspect") setTapMode("dest", false);
 }
@@ -637,7 +642,8 @@ function applyQueryRoute() {
   if (o) placeOrigin(o);
   if (d) placeDest(d);
   if (o && d) {
-    searchRoute();
+    searchRoute(false);
+    scheduleRefresh();
   }
 }
 
@@ -662,7 +668,7 @@ function setTapMode(mode: TapMode, announce = true) {
   setStatus("地図をタップして終点を指定してください");
 }
 
-function searchRoute() {
+function searchRoute(silent = false) {
   if (!graph || !dest) return;
 
   const startId = snapToNode(graph, origin, 80);
@@ -676,19 +682,55 @@ function searchRoute() {
     return;
   }
 
-  setStatus("いまの時刻で経路を計算中…");
+  if (!silent) setStatus("いまの時刻で経路を計算中…");
   const result = findRoute(graph, startId, endId, Date.now() / 1000);
   if (!result) {
     setStatus("経路が見つかりませんでした", true);
     return;
   }
 
-  showResult(result, true);
+  showResult(result, !silent);
+  if (!silent) showSaveBtn();
   setStatus(
-    result.signalStops.length > 0
-      ? "交差点をタップすると通過情報を表示します。地点を変えるときは「起点」または「終点」を押してください"
-      : "いま出発する場合のルートです"
+    silent
+      ? `${formatClock()} 時点でルートを更新しました`
+      : result.signalStops.length > 0
+        ? "交差点をタップすると通過情報を表示します。地点を変えるときは「起点」または「終点」を押してください"
+        : "いま出発する場合のルートです（約12秒ごとに再計算）"
   );
+}
+
+function scheduleRefresh() {
+  if (refreshTimer !== null) window.clearInterval(refreshTimer);
+  refreshTimer = window.setInterval(() => {
+    if (dest && graph) searchRoute(true);
+  }, REFRESH_MS);
+}
+
+function stopRefresh() {
+  if (refreshTimer === null) return;
+  window.clearInterval(refreshTimer);
+  refreshTimer = null;
+}
+
+function showSaveBtn() {
+  saveBtn.hidden = false;
+  saveBtn.disabled = false;
+  saveBtn.textContent = "この内容で保存";
+}
+
+function hideSaveBtn() {
+  saveBtn.hidden = true;
+  saveBtn.disabled = false;
+  saveBtn.textContent = "この内容で保存";
+}
+
+function saveCurrentRoute() {
+  if (!lastResult || saveBtn.disabled) return;
+  stopRefresh();
+  saveBtn.disabled = true;
+  saveBtn.textContent = "保存済み";
+  setStatus("この出発内容を保存しました。自動更新を停止しています");
 }
 
 async function loadGraph(): Promise<void> {
@@ -815,7 +857,11 @@ modeInspectBtn.addEventListener("click", () => {
 });
 
 searchBtn.addEventListener("click", () => {
-  searchRoute();
+  searchRoute(false);
+  scheduleRefresh();
+});
+saveBtn.addEventListener("click", () => {
+  saveCurrentRoute();
 });
 
 void showAddress(originLabel, origin, ++originLookup, () => originLookup);
