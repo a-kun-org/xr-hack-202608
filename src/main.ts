@@ -38,6 +38,7 @@ const modeDestBtn = document.getElementById("mode-dest") as HTMLButtonElement;
 const modeInspectBtn = document.getElementById("mode-inspect") as HTMLButtonElement;
 const statusEl = document.getElementById("status")!;
 const searchBtn = document.getElementById("search-btn") as HTMLButtonElement;
+const saveBtn = document.getElementById("save-btn") as HTMLButtonElement;
 const resultEl = document.getElementById("result")!;
 const sheetEl = document.getElementById("sheet")!;
 const sheetHandle = document.getElementById("sheet-handle")!;
@@ -458,6 +459,8 @@ function clearRoute() {
   }
   routeSignals = [];
   lastResult = null;
+  stopRefresh();
+  hideSaveBtn();
   updateInspectEnabled();
   if (tapMode === "inspect") setTapMode("dest", false);
 }
@@ -687,6 +690,7 @@ function searchRoute(silent = false) {
   }
 
   showResult(result, !silent);
+  if (!silent) showSaveBtn();
   setStatus(
     silent
       ? `${formatClock()} 時点でルートを更新しました`
@@ -701,6 +705,32 @@ function scheduleRefresh() {
   refreshTimer = window.setInterval(() => {
     if (dest && graph) searchRoute(true);
   }, REFRESH_MS);
+}
+
+function stopRefresh() {
+  if (refreshTimer === null) return;
+  window.clearInterval(refreshTimer);
+  refreshTimer = null;
+}
+
+function showSaveBtn() {
+  saveBtn.hidden = false;
+  saveBtn.disabled = false;
+  saveBtn.textContent = "この内容で保存";
+}
+
+function hideSaveBtn() {
+  saveBtn.hidden = true;
+  saveBtn.disabled = false;
+  saveBtn.textContent = "この内容で保存";
+}
+
+function saveCurrentRoute() {
+  if (!lastResult || saveBtn.disabled) return;
+  stopRefresh();
+  saveBtn.disabled = true;
+  saveBtn.textContent = "保存済み";
+  setStatus("この出発内容を保存しました。自動更新を停止しています");
 }
 
 async function loadGraph(): Promise<void> {
@@ -829,6 +859,9 @@ modeInspectBtn.addEventListener("click", () => {
 searchBtn.addEventListener("click", () => {
   searchRoute(false);
   scheduleRefresh();
+});
+saveBtn.addEventListener("click", () => {
+  saveCurrentRoute();
 });
 
 void showAddress(originLabel, origin, ++originLookup, () => originLookup);
